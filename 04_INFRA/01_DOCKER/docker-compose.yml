@@ -1,0 +1,154 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: "postgres:14-alpine"
+    container_name: exomaps-db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"           # Host port 5433 (avoid conflict with local PostgreSQL on 5432)
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: exomaps
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d exomaps"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: exomaps-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"           # Host port (localhost)
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ETL/Pipeline Service (optional)
+  etl:
+    build:
+      context: dbs/
+      dockerfile: Dockerfile
+    container_name: exomaps-etl
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - dbs/.db_env
+    environment:
+      POSTGRES_HOST: db              # Docker internal name
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - backend
+    command: /bin/bash -c "sleep infinity"  # Keep container alive
+    restart: unless-stopped
+
+  # Web Application
+  web:
+    build:
+      context: src/
+      dockerfile: Dockerfile
+    container_name: exomaps-web
+    restart: unless-stopped
+    ports:
+      - "5000:5000"           # Host port (localhost)
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/code:rw            # Mount full project
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db                    # Docker internal name for db access
+      REDIS_HOST: redis                    # Docker internal name for redis access
+      FLASK_ENV: development
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.5.0.0/16
+
+volumes:
+  dbdata:
+    driver: local
+
+
+
+# version: '3'
+
+# services:
+#   web:
+#     restart: always
+#     build: ./web
+#     expose:
+#       - "8000"
+#     links:
+#       - postgres:postgres
+#     volumes:
+#       - web-data:/usr/src/app/static
+#     env_file: 
+#       - .env
+#     command: /usr/local/bin/gunicorn -w 2 -b :8000 app:app
+
+#   nginx:
+#     restart: always
+#     build: ./nginx
+#     ports:
+#       - "80:80"
+#     volumes:
+#       - .:/www/static
+#       - web-data:/usr/src/app/static
+#     links:
+#       - web:web
+
+#   data:
+#     restart: always
+#     image: postgres:12.1-alpine
+#     # command: "true"
+#     ports:
+#       - "5432:5432"
+#     network_mode: bridge
+#     container_name: postgres
+
+#     environment:
+#       POSTGRES_USER: 'postgres'
+#       POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'
+#       POSTGRES_DB: 'postgrse'
+
+#     volumes:
+#       - db-data:/var/lib/postgresql/data
+
+# volumes:
+#   db-data:
+#   web-data:

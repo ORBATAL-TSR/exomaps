@@ -1,0 +1,31 @@
+# Core web framework
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+Flask-SocketIO==5.3.5
+Flask-CORS==4.0.0
+
+# UI and widgets
+Flask-Bootstrap4==4.0.2
+dash==2.14.1
+dash-bootstrap-components==1.5.0
+Flask-Webpack==0.1.0
+
+# Database and caching
+psycopg2-binary==2.9.9
+redis==5.0.1
+sqlalchemy==2.0.23
+
+# Data and utilities
+pandas==2.1.4
+numpy==1.24.4
+requests==2.31.1
+python-socketio==5.10.0
+python-engineio==4.8.0
+
+# Development and testing
+pytest==7.4.3
+pytest-cov==4.1.0
+flake8==6.1.0
+black==23.12.1
+isort==5.13.2
+mypy==1.7.1

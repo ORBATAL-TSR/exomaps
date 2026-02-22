@@ -1,0 +1,18 @@
+# Database and ORM
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+
+# Data processing
+pandas==2.1.4
+numpy==1.24.4
+
+# HTTP and network
+requests==2.31.1
+
+# Development and testing
+pytest==7.4.3
+pytest-cov==4.1.0
+flake8==6.1.0
+black==23.12.1
+isort==5.13.2
+mypy==1.7.1

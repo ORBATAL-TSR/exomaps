@@ -1,0 +1,342 @@
+<!-- Simulation Control Panel - Phase 05 v2 -->
+{% extends "base.html" %}
+
+{% block title %}Simulation Control - Exomaps{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+  <div class="row mb-3">
+    <div class="col-md-12">
+      <h2><i class="fas fa-cogs"></i> Simulation Control Panel</h2>
+      <p class="text-muted">Manage and monitor active simulations</p>
+    </div>
+  </div>
+
+  <!-- Simulation Status -->
+  <div class="row mb-4">
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-header bg-primary text-white">
+          <h6 class="mb-0">Current Simulation</h6>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <div class="col-6">
+              <small class="text-muted">Run ID</small>
+              <p class="h6" id="sim-run-id">-</p>
+            </div>
+            <div class="col-6">
+              <small class="text-muted">Status</small>
+              <p class="h6"><span class="badge badge-warning" id="sim-status">Idle</span></p>
+            </div>
+          </div>
+          <hr/>
+          <div class="row">
+            <div class="col-6">
+              <small class="text-muted">Current Tick</small>
+              <p class="h6" id="sim-tick">0</p>
+            </div>
+            <div class="col-6">
+              <small class="text-muted">Simulated Year</small>
+              <p class="h6" id="sim-year">0</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-header bg-success text-white">
+          <h6 class="mb-0">Population Metrics</h6>
+        </div>
+        <div class="card-body">
+          <div class="row mb-2">
+            <div class="col-6">
+              <small class="text-muted">Total Population</small>
+              <p class="h6" id="sim-population">-</p>
+            </div>
+            <div class="col-6">
+              <small class="text-muted">Settled Systems</small>
+              <p class="h6" id="sim-systems">-</p>
+            </div>
+          </div>
+          <hr/>
+          <small class="text-muted">Growth Rate</small>
+          <div class="progress" style="height: 20px;">
+            <div class="progress-bar bg-success" id="sim-growth" style="width: 2%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-header bg-info text-white">
+          <h6 class="mb-0">Economy & Politics</h6>
+        </div>
+        <div class="card-body">
+          <div class="row mb-2">
+            <div class="col-6">
+              <small class="text-muted">Avg Tech Level</small>
+              <p class="h6" id="sim-tech">-</p>
+            </div>
+            <div class="col-6">
+              <small class="text-muted">Trade Activity</small>
+              <p class="h6" id="sim-trade">-</p>
+            </div>
+          </div>
+          <hr/>
+          <small class="text-muted">Cohesion</small>
+          <div class="progress" style="height: 20px;">
+            <div class="progress-bar" id="sim-cohesion" style="width: 70%; background-color: #17a2b8;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="row mb-4">
+    <div class="col-md-12">
+      <div class="card">
+        <div class="card-header bg-dark text-white">
+          <h6 class="mb-0">Simulation Controls</h6>
+        </div>
+        <div class="card-body">
+          <!-- Speed control -->
+          <div class="row mb-3">
+            <div class="col-md-3">
+              <label for="speed-slider">Simulation Speed</label>
+              <div class="input-group">
+                <input type="range" class="form-control-range" id="speed-slider" min="0.1" max="10" step="0.1" value="1">
+                <div class="input-group-append">
+                  <span class="input-group-text" id="speed-value">1x</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-md-3">
+              <label for="step-size">Steps to Execute</label>
+              <input type="number" class="form-control" id="step-size" min="1" max="1000" value="10">
+            </div>
+
+            <div class="col-md-6">
+              <label>&nbsp;</label>
+              <div class="btn-group w-100" role="group">
+                <button type="button" class="btn btn-primary" id="btn-play-pause">
+                  <i class="fas fa-play"></i> Start
+                </button>
+                <button type="button" class="btn btn-info" id="btn-step">
+                  <i class="fas fa-step-forward"></i> Step
+                </button>
+                <button type="button" class="btn btn-warning" id="btn-pause">
+                  <i class="fas fa-pause"></i> Pause
+                </button>
+                <button type="button" class="btn btn-danger" id="btn-stop">
+                  <i class="fas fa-stop"></i> Stop
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Progress bar -->
+          <div class="row">
+            <div class="col-md-12">
+              <div class="progress" style="height: 30px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" id="sim-progress" 
+                     role="progressbar" style="width: 0%">
+                  <span id="sim-progress-text">Idle</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Events Log -->
+  <div class="row">
+    <div class="col-md-12">
+      <div class="card">
+        <div class="card-header bg-dark text-white">
+          <h6 class="mb-0">Recent Events (Last 20)</h6>
+        </div>
+        <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+          <table class="table table-sm table-hover" id="events-table">
+            <thead class="table-dark">
+              <tr>
+                <th style="width: 60px;">Tick</th>
+                <th style="width: 100px;">Type</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody id="events-tbody">
+              <tr><td colspan="3" class="text-muted text-center">No events yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+class SimulationController {
+  constructor() {
+    this.isRunning = false;
+    this.currentRunId = null;
+    this.autoRefreshInterval = null;
+    
+    this.setupEventListeners();
+    this.loadSimulationState();
+  }
+
+  setupEventListeners() {
+    document.getElementById('btn-play-pause').addEventListener('click', () => {
+      if (this.isRunning) {
+        this.pause();
+      } else {
+        this.play();
+      }
+    });
+
+    document.getElementById('btn-step').addEventListener('click', () => {
+      const steps = parseInt(document.getElementById('step-size').value);
+      this.step(steps);
+    });
+
+    document.getElementById('btn-pause').addEventListener('click', () => this.pause());
+    document.getElementById('btn-stop').addEventListener('click', () => this.stop());
+
+    document.getElementById('speed-slider').addEventListener('change', (e) => {
+      document.getElementById('speed-value').textContent = e.target.value + 'x';
+    });
+  }
+
+  async play() {
+    try {
+      const response = await fetch(`/api/simulation/${this.currentRunId}/resume`, { method: 'POST' });
+      if (response.ok) {
+        this.isRunning = true;
+        document.getElementById('btn-play-pause').innerHTML = '<i class="fas fa-pause"></i> Pause';
+        document.getElementById('sim-status').textContent = 'Running';
+        document.getElementById('sim-status').className = 'badge badge-success';
+        this.startAutoRefresh();
+      }
+    } catch (error) {
+      console.error('Play failed:', error);
+    }
+  }
+
+  async pause() {
+    try {
+      const response = await fetch(`/api/simulation/${this.currentRunId}/pause`, { method: 'POST' });
+      if (response.ok) {
+        this.isRunning = false;
+        document.getElementById('btn-play-pause').innerHTML = '<i class="fas fa-play"></i> Start';
+        document.getElementById('sim-status').textContent = 'Paused';
+        document.getElementById('sim-status').className = 'badge badge-warning';
+        this.stopAutoRefresh();
+      }
+    } catch (error) {
+      console.error('Pause failed:', error);
+    }
+  }
+
+  async step(numSteps) {
+    try {
+      const response = await fetch(`/api/simulation/${this.currentRunId}/step?interval=${numSteps}`, { method: 'POST' });
+      if (response.ok) {
+        this.updateDisplay();
+      }
+    } catch (error) {
+      console.error('Step failed:', error);
+    }
+  }
+
+  async stop() {
+    this.stopAutoRefresh();
+    this.currentRunId = null;
+    document.getElementById('sim-status').textContent = 'Idle';
+    document.getElementById('sim-status').className = 'badge badge-warning';
+  }
+
+  async loadSimulationState() {
+    // In a real implementation, fetch from /api/simulation/latest/snapshot
+    document.getElementById('sim-population').textContent = '2.6M';
+    document.getElementById('sim-systems').textContent = '1';
+    document.getElementById('sim-tick').textContent = '50';
+    document.getElementById('sim-year').textContent = '12';
+  }
+
+  async updateDisplay() {
+    // Fetch current snapshot from API
+    try {
+      const response = await fetch(`/api/simulation/${this.currentRunId}/snapshot`);
+      const data = await response.json();
+      
+      if (data.snapshot) {
+        const s = data.snapshot;
+        document.getElementById('sim-tick').textContent = s.tick;
+        document.getElementById('sim-year').textContent = s.simulated_year;
+        document.getElementById('sim-population').textContent = (s.total_population / 1e6).toFixed(1) + 'M';
+        document.getElementById('sim-systems').textContent = s.systems_populated;
+        
+        // Update events table
+        if (s.events && s.events.length > 0) {
+          const tbody = document.getElementById('events-tbody');
+          tbody.innerHTML = '';
+          s.events.slice(-20).reverse().forEach(event => {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+              <td>${event.tick}</td>
+              <td><span class="badge badge-info">${event.event_type}</span></td>
+              <td>${event.description || event.event_type}</td>
+            `;
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Update failed:', error);
+    }
+  }
+
+  startAutoRefresh() {
+    this.autoRefreshInterval = setInterval(() => this.updateDisplay(), 1000);
+  }
+
+  stopAutoRefresh() {
+    if (this.autoRefreshInterval) {
+      clearInterval(this.autoRefreshInterval);
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  new SimulationController();
+});
+</script>
+
+<style>
+.card {
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin-bottom: 10px;
+}
+
+.card-header {
+  font-weight: 600;
+}
+
+.progress {
+  background-color: #e9ecef;
+  border-radius: 4px;
+}
+
+table td, table th {
+  vertical-align: middle;
+}
+</style>
+
+{% endblock %}

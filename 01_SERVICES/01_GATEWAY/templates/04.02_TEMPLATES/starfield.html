@@ -1,0 +1,168 @@
+<!-- StarField Interactive Viewer - Phase 06 MVP -->
+{% extends "base.html" %}
+
+{% block title %}Star Map - Exomaps{% endblock %}
+
+{% block content %}
+<div class="container-fluid h-100 d-flex flex-column">
+  <!-- Toolbar -->
+  <div class="row bg-dark text-white p-3">
+    <div class="col-md-8">
+      <h4><i class="fas fa-star"></i> Interactive Star Map</h4>
+      <small class="text-muted">3D visualization of nearby systems (<=100 LY)</small>
+    </div>
+    <div class="col-md-4 text-end">
+      <button class="btn btn-sm btn-outline-light" id="btn-reset-view" title="Reset camera">
+        <i class="fas fa-redo"></i> Reset View
+      </button>
+      <button class="btn btn-sm btn-outline-light" id="btn-toggle-labels" title="Show/hide labels">
+        <i class="fas fa-tag"></i> Labels
+      </button>
+      <button class="btn btn-sm btn-outline-light" id="btn-fullscreen" title="Fullscreen">
+        <i class="fas fa-expand"></i> Fullscreen
+      </button>
+    </div>
+  </div>
+
+  <!-- Main visualization area -->
+  <div class="row flex-grow-1" style="min-height: 600px;">
+    <!-- 3D Canvas -->
+    <div class="col-md-9">
+      <canvas id="starfield-canvas" class="w-100 h-100"></canvas>
+    </div>
+
+    <!-- Control Panel -->
+    <div class="col-md-3 bg-light border-left p-3 overflow-auto">
+      <!-- Layer Toggles -->
+      <div class="card mb-3">
+        <div class="card-header bg-secondary text-white">
+          <h6 class="mb-0">Visualization Layers</h6>
+        </div>
+        <div class="card-body">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="layer-observed" checked>
+            <label class="form-check-label" for="layer-observed">
+              Observed Systems <span class="badge badge-info">{{ systems_count }}</span>
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="layer-inferred" checked>
+            <label class="form-check-label" for="layer-inferred">
+              Inferred Candidates
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="layer-routes" checked>
+            <label class="form-check-label" for="layer-routes">
+              Trade Routes
+            </label>
+          </div>
+          <hr/>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="layer-habitable" checked>
+            <label class="form-check-label" for="layer-habitable">
+              Habitable Zones (green)
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="layer-resources">
+            <label class="form-check-label" for="layer-resources">
+              Resource-Rich Systems
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Distance Filter -->
+      <div class="card mb-3">
+        <div class="card-header bg-secondary text-white">
+          <h6 class="mb-0">Filter by Distance</h6>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label for="distance-slider">Distance (Light-Years)</label>
+            <input type="range" class="form-control-range" id="distance-slider" min="0" max="100" value="100">
+            <small class="text-muted">Showing systems up to <span id="distance-value">100</span> LY</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selected System Details -->
+      <div class="card">
+        <div class="card-header bg-secondary text-white">
+          <h6 class="mb-0">System Details</h6>
+        </div>
+        <div class="card-body" id="system-details">
+          <p class="text-muted text-center">Click a star to view details</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal fade" id="system-modal" tabindex="-1" role="dialog">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="system-name">System Name</h5>
+        <button type="button" class="close" data-dismiss="modal">
+          <span>&times;</span>
+        </button>
+      </div>
+      <div class="modal-body" id="system-info">
+        <!-- Populated by JavaScript -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="btn-simulate">
+          <i class="fas fa-play"></i> Simulate This System
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+#starfield-canvas {
+  background: linear-gradient(135deg, #001a33 0%, #001a4d 100%);
+  cursor: crosshair;
+}
+
+.control-panel {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.system-marker {
+  font-size: 12px;
+  font-weight: bold;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.system-marker:hover {
+  font-size: 14px;
+}
+
+/*.card {*/
+/*  box-shadow: 0 2px 4px rgba(0,0,0,0.1);*/
+/*}*/
+
+.badge-info {
+  background-color: #17a2b8;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+#system-details small {
+  display: block;
+  margin-top: 4px;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/static/js/exomaps/starfield-viewer.js"></script>
+
+{% endblock %}

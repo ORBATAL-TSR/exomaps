@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block head %}
+  {{ super() }}
+{% endblock %}
+{% block content %}
+<div class="container-fluid" style="padding: 16px;">
+  <div class="row">
+    <div class="col-12">
+      <h2>Exomaps Operations Dashboard</h2>
+      <p>Use this as the main control center for ingestion quality, reference checks, and run inspection.</p>
+
+      <div class="alert {% if db_status.connected %}alert-success{% else %}alert-danger{% endif %}">
+        <strong>Database Status:</strong>
+        {% if db_status.connected %}
+          Connected ✓
+        {% else %}
+          {{ db_status.message }}
+        {% endif %}
+      </div>
+
+      {% if db_ready %}
+        <div class="card" style="margin-bottom: 12px;">
+          <div class="card-body">
+            <h5>Run Selection</h5>
+            {% if run_options %}
+              <form method="get" action="/" style="display: inline;">
+                <select name="run_id" onchange="this.form.submit();" class="form-control" style="width: auto; display: inline-block;">
+                  <option value="">Latest Run</option>
+                  {% for run in run_options %}
+                    <option value="{{ run.run_id }}" {% if run.run_id == run_id %}selected{% endif %}>
+                      {{ run.run_id[:8] }}... ({{ run.status }})
+                    </option>
+                  {% endfor %}
+                </select>
+              </form>
+            {% else %}
+              <p class="text-muted">No runs found. Try running Phase 01 pipeline.</p>
+            {% endif %}
+          </div>
+        </div>
+      {% else %}
+        <div class="alert alert-warning">
+          Database is not configured. Set DBUSER, DBPASS, DBNAME, and optional DBHOST/DBPORT.
+        </div>
+      {% endif %}
+      <p>
+        <a class="btn btn-primary" href="/phase01/qa">Open QA Explorer</a>
+        <a class="btn btn-secondary" href="/phase01/qa.json">Open QA JSON</a>
+        <a class="btn btn-outline-dark" href="/viewer">Legacy Viewer</a>
+      </p>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top: 12px;">
+    <div class="col-md-2 col-sm-4 col-6"><div class="card"><div class="card-body"><h6>Runs</h6><h4>{{ summary.get('run_count', 0) }}</h4></div></div></div>
+    <div class="col-md-2 col-sm-4 col-6"><div class="card"><div class="card-body"><h6>Sources</h6><h4>{{ summary.get('sources', 0) }}</h4></div></div></div>
+    <div class="col-md-2 col-sm-4 col-6"><div class="card"><div class="card-body"><h6>Total Rows</h6><h4>{{ summary.get('total_rows', 0) }}</h4></div></div></div>
+    <div class="col-md-2 col-sm-4 col-6"><div class="card"><div class="card-body"><h6>Accepted</h6><h4>{{ summary.get('accepted_rows', 0) }}</h4></div></div></div>
+    {% if current_persona_key not in ['observer_guest', 'general_user'] %}
+    <div class="col-md-2 col-sm-4 col-6"><div class="card"><div class="card-body"><h6>Quarantined</h6><h4>{{ summary.get('quarantined_rows', 0) }}</h4></div></div></div>
+    {% endif %}
+    {% if current_persona_key in ['admin', 'science_analyst', 'data_curator'] %}
+    <div class="col-md-2 col-sm-4 col-6"><div class="card"><div class="card-body"><h6>Ref Pass</h6><h4>{{ summary.get('reference_pass', 0) }}</h4></div></div></div>
+    <div class="col-md-2 col-sm-4 col-6"><div class="card"><div class="card-body"><h6>Ref Fail</h6><h4>{{ summary.get('reference_fail', 0) }}</h4></div></div></div>
+    {% endif %}
+  </div>
+
+  <div class="row" style="margin-top: 20px;">
+    <div class="col-12">
+      <h4>Validation Summary</h4>
+      {% if current_persona_key in ['admin', 'data_curator', 'ops_engineer'] %}
+      {{ table_validation|safe }}
+      {% else %}
+      <p class="text-muted">(Validation details only visible to data curators and admins)</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row" style="margin-top: 20px;">
+    <div class="col-12">
+      <h4>Source Manifest</h4>
+      {% if current_persona_key in ['admin', 'data_curator', 'ops_engineer'] %}
+      {{ table_manifest|safe }}
+      {% else %}
+      <p class="text-muted">(Manifest details only visible to data curators and admins)</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row" style="margin-top: 20px;">
+    <div class="col-12">
+      <h4>Reference Validation</h4>
+      {% if current_persona_key in ['admin', 'science_analyst', 'data_curator'] %}
+      {{ table_reference|safe }}
+      {% else %}
+      <p class="text-muted">(Reference checks only visible to science analysts and admins)</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

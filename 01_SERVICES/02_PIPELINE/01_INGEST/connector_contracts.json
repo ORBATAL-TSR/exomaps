@@ -1,0 +1,28 @@
+{
+  "contract_version": "phase01.v1",
+  "contracts": {
+    "EXOPLANETS": {
+      "required_columns": ["star_name", "planet_name", "ra", "dec"],
+      "numeric_bounds": {
+        "ra": [0, 360],
+        "dec": [-90, 90],
+        "orbital_period": [0, 1000000],
+        "semi_major_axis": [0, 100000],
+        "mass": [0, 100000],
+        "radius": [0, 10000]
+      },
+      "unique_keys": ["star_name", "planet_name"],
+      "null_forbidden": ["star_name", "planet_name", "ra", "dec"]
+    },
+    "SIMBAD": {
+      "required_columns": ["sys_id", "main_id", "average_of_ra", "average_of_dec", "average_of_dist"],
+      "numeric_bounds": {
+        "average_of_ra": [0, 360],
+        "average_of_dec": [-90, 90],
+        "average_of_dist": [0, 1000000]
+      },
+      "unique_keys": ["sys_id", "main_id"],
+      "null_forbidden": ["sys_id", "main_id", "average_of_ra", "average_of_dec"]
+    }
+  }
+}

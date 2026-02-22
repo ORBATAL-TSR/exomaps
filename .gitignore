@@ -1,20 +1,21 @@
+# ── IDE / Editor ──────────────────────────────────
 .idea/
 .vscode/
 *.code-workspace
 exo_ws.code-workspace
+
+# ── Environment / Secrets ─────────────────────────
 .env
+.env.*
+config/.env.auto
+config/.env.local
 *.db_env
 
-
-# Byte-compiled / optimized / DLL files
+# ── Python ────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 env/
 build/
@@ -32,18 +33,15 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
-
-# Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+.venv
+venv/
+ENV/
 
-# Unit test / coverage reports
+# ── Testing / Coverage ───────────────────────────
 htmlcov/
 .tox/
 .coverage
@@ -53,47 +51,38 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
+.mypy_cache/
 
-# Translations
-*.mo
-*.pot
-
-# # Django stuff:
-# *.log
-# local_settings.py
-
-# Flask stuff:
+# ── Flask ─────────────────────────────────────────
 instance/
 .webassets-cache
 
-# Scrapy stuff:
-.scrapy
+# ── React / Node ──────────────────────────────────
+node_modules/
+**/build/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# Sphinx documentation
+# ── Translations ──────────────────────────────────
+*.mo
+*.pot
+
+# ── Docs / Build Artifacts ────────────────────────
 docs/_build/
-
-# PyBuilder
+/site
 target/
 
-# Jupyter Notebook
+# ── Jupyter ───────────────────────────────────────
 .ipynb_checkpoints
 
-# pyenv
+# ── Misc ──────────────────────────────────────────
 .python-version
-
-# celery beat schedule file
 celerybeat-schedule
-
-# dotenv
-.env
-
-# virtualenv
-.venv
-venv/
-ENV/
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
+.scrapy
+logs/
+*.log

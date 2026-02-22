@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Phase01 QA{% endblock %}
+{% block head %}
+  {{ super() }}
+{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="row">
+    <div class="col-12">
+      <h2>Phase 01 QA Explorer</h2>
+      <p>Inspect ingestion runs, validation gates, quarantine error counts, and reference checks.</p>
+
+      <div class="alert {% if db_status.connected %}alert-success{% else %}alert-danger{% endif %}">
+        <strong>Database Status:</strong>
+        {% if db_status.connected %}
+          Connected ✓
+        {% else %}
+          {{ db_status.message }}
+        {% endif %}
+      </div>
+
+      <div class="card" style="margin-bottom: 12px;">
+        <div class="card-body">
+          <h5>Run Selection</h5>
+          {% if run_options %}
+            <form method="get" action="/phase01/qa" style="display: inline;">
+              <select name="run_id" onchange="this.form.submit();" class="form-control" style="width: auto; display: inline-block;">
+                <option value="">Latest Run</option>
+                {% for run in run_options %}
+                  <option value="{{ run.run_id }}" {% if run.run_id == run_id %}selected{% endif %}>
+                    {{ run.run_id[:8] }}... ({{ run.status }})
+                  </option>
+                {% endfor %}
+              </select>
+            </form>
+            <a href="/phase01/qa.json?run_id={{ run_id or '' }}" class="btn btn-secondary" style="margin-left: 10px;">JSON API</a>
+          {% else %}
+            <p class="text-muted">No runs found. Try running Phase 01 pipeline.</p>
+          {% endif %}
+        </div>
+      </div>
+      <p><strong>Selected run:</strong> {{ run_id or 'none' }}</p>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-12">
+      <h4>Recent Runs</h4>
+      {{ table_runs|safe }}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-12">
+      <h4>Validation Summary</h4>
+      {{ table_validation|safe }}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-12">
+      <h4>Source Manifest</h4>
+      {{ table_manifest|safe }}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-12">
+      <h4>Quarantine Top Errors</h4>
+      {{ table_quarantine|safe }}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-12">
+      <h4>Reference Validation Results</h4>
+      {{ table_reference|safe }}
+    </div>
+  </div>
+</div>
+{% endblock %}

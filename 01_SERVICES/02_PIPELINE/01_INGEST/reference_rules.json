@@ -1,0 +1,71 @@
+{
+  "rules_version": "phase01.reference.v1",
+  "rules": [
+    {
+      "rule_key": "distance_alpha_centauri",
+      "rule_name": "Alpha Centauri distance to Sol",
+      "description": "Distance to Alpha Centauri system should be close to known reference.",
+      "expected_value": 4.37,
+      "tolerance": 1.25,
+      "units": "ly",
+      "matcher": {
+        "contains_any": ["ALF CEN", "RIGIL KENTAURUS", "ALPHA CENTAURI"]
+      }
+    },
+    {
+      "rule_key": "distance_barnards_star",
+      "rule_name": "Barnard's Star distance to Sol",
+      "description": "Distance to Barnard's Star should be close to known reference.",
+      "expected_value": 5.96,
+      "tolerance": 1.25,
+      "units": "ly",
+      "matcher": {
+        "contains_any": ["BARNARD", "GJ 699"]
+      }
+    },
+    {
+      "rule_key": "distance_sirius",
+      "rule_name": "Sirius distance to Sol",
+      "description": "Distance to Sirius should be close to known reference.",
+      "expected_value": 8.60,
+      "tolerance": 1.5,
+      "units": "ly",
+      "matcher": {
+        "contains_any": ["SIRIUS", "ALF CMA"]
+      }
+    },
+    {
+      "rule_key": "distance_procyon",
+      "rule_name": "Procyon distance to Sol",
+      "description": "Distance to Procyon should be close to known reference.",
+      "expected_value": 11.46,
+      "tolerance": 1.75,
+      "units": "ly",
+      "matcher": {
+        "contains_any": ["PROCYON", "ALF CMI"]
+      }
+    },
+    {
+      "rule_key": "distance_tau_ceti",
+      "rule_name": "Tau Ceti distance to Sol",
+      "description": "Distance to Tau Ceti should be close to known reference.",
+      "expected_value": 11.90,
+      "tolerance": 2.0,
+      "units": "ly",
+      "matcher": {
+        "contains_any": ["TAU CET", "TAU CETI"]
+      }
+    },
+    {
+      "rule_key": "distance_epsilon_eridani",
+      "rule_name": "Epsilon Eridani distance to Sol",
+      "description": "Distance to Epsilon Eridani should be close to known reference.",
+      "expected_value": 10.50,
+      "tolerance": 2.0,
+      "units": "ly",
+      "matcher": {
+        "contains_any": ["EPS ERI", "EPSILON ERIDANI"]
+      }
+    }
+  ]
+}
