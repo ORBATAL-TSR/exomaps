@@ -1,127 +1,159 @@
-# ExoMaps — Nearby Stellar System Simulator
+# ExoMaps
 
-> Interactive 3-D star map and economy simulator for all stellar systems within 15 parsecs.
+### Real stars. Real data. Real simulation.
+
+**An interactive 3-D star map of every known stellar system within 15 parsecs — built on actual astronomical catalogs, rendered in the browser, and designed to grow into a full interstellar civilization simulator.**
 
 ![Star Map](https://raw.githubusercontent.com/iontom/exomaps/master/wiki/STARMAP.png)
 
 ---
 
-## Project Goals
+## What is ExoMaps?
 
-1. **Stellar Cartography** — Render every known system within 15 pc in a WebGL star map.  Browse planetary systems, binary configurations, and confidence data.  Use Titius-Bode predictions to fill gaps between confirmed exoplanets.
-2. **Trans-Stellar Economy** — Model slower-than-light infrastructure, polities, and trade networks.  A hard-sci-fi space-opera generator backed by real astronomical data.
+ExoMaps puts you inside a scientifically-grounded model of the solar neighborhood. Every star you see is real, positioned from NASA/JPL Exoplanet Archive and SIMBAD cross-matched data, with spectral classification determining color, luminosity, and rendering.
+
+**It's not a game — it's a living, queryable map of the neighborhood.**
+
+Currently tracking **1,796 stellar systems** across 23 API endpoints, with a four-phase data pipeline that ingests, transforms, infers, and simulates.
+
+### What can you do today?
+
+- **Explore** — Fly through a 3-D WebGL star map rendered with custom GLSL shaders. Stars glow with physically-based spectral colors (O → M class).
+- **Browse** — Click any system to see its catalog data, planetary companions, binary configuration, and confidence tiers.
+- **Query** — Hit the REST API for paginated star systems, coordinate data, validation reports, and simulation snapshots.
+- **Simulate** — Run the economy/politics simulation engine across the local stellar neighborhood (early alpha).
+
+### Where is it going?
+
+- **Titius-Bode inference** — Predict missing planets using orbital spacing laws calibrated by stellar metallicity.
+- **Trans-Stellar Economy** — Model slower-than-light trade, infrastructure, polities, and interstellar vehicles. A hard-sci-fi space opera generator backed by real data.
+- **Multiplayer** — WebSocket relay + event bus for shared simulation state.
+- **Multi-platform** — Desktop (Electron/Tauri) and mobile (React Native) clients sharing a common SDK.
 
 ---
 
 ## Tech Stack
 
-| Layer | Tech |
-|-------|------|
-| **Frontend** | React 19 · TypeScript · React Three Fiber · Three.js |
-| **Backend**  | Python · Flask · flask-cors |
-| **Database** | PostgreSQL 17 (schemas: `stg_data`, `dm_galaxy`, `app_simulation`) |
-| **Infra**    | Docker Compose (optional), local dev supported |
+| Layer | Technology |
+|-------|------------|
+| **3-D Client** | React 19 · TypeScript 5.9 · React Three Fiber · Three.js · Custom GLSL Shaders |
+| **API Gateway** | Python 3 · Flask · SQLAlchemy |
+| **Database** | PostgreSQL 17 — three schemas: `stg_data` · `dm_galaxy` · `app_simulation` |
+| **Data Pipeline** | Four-phase ETL: Ingest → Transform → Inference → Simulation |
+| **Infrastructure** | Docker Compose (optional) · Makefile · LAUNCH.sh one-command deploy |
 
 ---
 
-## Repository Layout
+## Quick Start
+
+```bash
+# 1. Clone & configure
+git clone https://github.com/iontom/exomaps.git
+cd exomaps
+cp .env.example .env          # edit .env — set POSTGRES_PASSWORD
+
+# 2. Launch everything (prunes old processes, builds client, starts server)
+bash LAUNCH.sh
+
+# Or skip the React rebuild if you already have a build:
+bash LAUNCH.sh --skip-build
+```
+
+Open **http://localhost:5000** — the star map loads immediately.
+
+### Prerequisites
+
+- Python 3.10+
+- Node 20+ & npm
+- PostgreSQL 17 (local or Docker)
+
+### Manual Setup (if you prefer step-by-step)
+
+```bash
+# Database
+createdb exomaps
+psql -d exomaps -f 03_DATA/02_SCHEMAS/create_schemas.sql
+
+# Backend
+pip install -r 01_SERVICES/01_GATEWAY/requirements.txt
+
+# Frontend
+cd 02_CLIENTS/01_WEB && npm install --legacy-peer-deps && npm run build && cd ../..
+
+# Run
+POSTGRES_USER=$USER POSTGRES_DB=exomaps python3 01_SERVICES/01_GATEWAY/app.py
+```
+
+---
+
+## Project Structure
 
 ```
 exomaps/
-├── frontend/          # React / TypeScript SPA (star map, admin, sim)
-│   ├── src/
-│   │   ├── components/   # StarMap, TopNav
-│   │   ├── pages/        # StarMapPage, AdminPage, SimulationPage, DataQAPage
-│   │   ├── services/     # Axios API client
-│   │   └── types/        # TypeScript interfaces
-│   └── package.json
-├── src/               # Flask backend
-│   └── app/
-│       ├── app.py        # Routes & API endpoints
-│       ├── models.py     # SQLAlchemy models
-│       └── py/           # Controllers
-├── dbs/               # Database layer
-│   ├── ddl/              # Schema DDL & migrations
-│   └── fetch_db/         # ETL connectors (JPL, SIMBAD)
-├── data/              # Source CSV files
-├── config/            # Environment files (.env.auto, .env.local)
-├── scripts/           # Utility & pipeline scripts
-├── docs/              # All documentation
-│   ├── setup/            # Installation & config guides
-│   ├── troubleshooting/  # Debug notes
-│   └── reports/          # Phase reports & manifests
-├── 00_plan/           # Project planning docs
-├── wiki/              # Wiki assets
-├── docker-compose.yml
-├── Makefile
+├── 00_ARCHITECTURE/       System & component architecture docs (00–10)
+├── 01_SERVICES/
+│   ├── 01_GATEWAY/        Flask API + SPA host (port 5000)
+│   ├── 02_PIPELINE/       Four-phase data pipeline
+│   │   ├── 01_INGEST/     NASA/JPL + SIMBAD connectors
+│   │   ├── 02_TRANSFORM/  Coordinate transforms, cross-matching
+│   │   ├── 03_INFERENCE/  Titius-Bode, spectral inference
+│   │   ├── 04_SIMULATION/ Economy, politics, population models
+│   │   └── SHARED/        Database, config, service discovery
+│   ├── 03_WORLD_ENGINE/   (planned) Dedicated simulation service
+│   └── 04_MESSAGING/      (planned) WebSocket relay + event bus
+├── 02_CLIENTS/
+│   ├── 01_WEB/            React / TypeScript / Three.js SPA
+│   ├── 02_DESKTOP/        (planned) Electron or Tauri
+│   ├── 03_MOBILE/         (planned) React Native
+│   └── SHARED/            (planned) Cross-client SDK & types
+├── 03_DATA/
+│   ├── 01_SOURCES/        NASA Exoplanet Archive + SIMBAD CSVs
+│   ├── 02_SCHEMAS/        PostgreSQL DDL
+│   ├── 03_MIGRATIONS/     Versioned SQL migrations
+│   └── 04_SEEDS/          (planned) Test fixtures
+├── 04_INFRA/
+│   ├── 01_DOCKER/         docker-compose.yml
+│   ├── 03_SCRIPTS/        Pipeline runners, health checks, setup
+│   └── Makefile
+├── 05_DOCS/
+│   ├── 00_SCOPE/          Vision, requirements, roadmaps
+│   ├── 01_SETUP/          Installation guides
+│   └── 02_TROUBLESHOOTING/
+├── .env.example           Credential template (no secrets committed)
+├── LAUNCH.sh              One-command deploy
 └── README.md
 ```
 
 ---
 
-## Quick Start (Local Development)
+## API Highlights
 
-### Prerequisites
-- Python 3.10+, Node 20+, PostgreSQL 17
+| Method | Path | What it returns |
+|--------|------|-----------------|
+| `GET` | `/api/health` | DB status, route count |
+| `GET` | `/api/world/systems/full` | All 1,796 systems with XYZ coordinates |
+| `GET` | `/api/world/systems/xyz` | Lightweight coordinate-only payload |
+| `GET` | `/api/world/confidence` | Confidence & uncertainty metadata |
+| `GET` | `/api/persona` | Current user persona |
+| `GET` | `/api/simulation/{id}/snapshot` | Simulation state at a point in time |
+| `POST` | `/api/simulation/{id}/step` | Advance the simulation N ticks |
 
-### 1) Database
-
-```bash
-# Ensure PostgreSQL is running; create the database if needed
-createdb exomaps
-
-# Apply schemas
-psql -d exomaps -f dbs/ddl/create_schemas.sql
-```
-
-### 2) Flask API (port 5000)
-
-```bash
-export POSTGRES_USER=$USER POSTGRES_HOST=localhost POSTGRES_DB=exomaps
-
-pip install -r src/requirements.txt
-pip install flask-cors          # required for React dev proxy
-
-python3 src/app/app.py
-```
-
-### 3) React Frontend (port 3000)
-
-```bash
-cd frontend
-npm install
-npm start                       # proxies /api/* → localhost:5000
-```
-
-Open **http://localhost:3000** — the 3-D star map loads as the landing page.
+Full endpoint list: 23 routes — hit `/api/health` to see the count live.
 
 ---
 
-## API Endpoints
+## Security
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/persona` | Current persona & role |
-| POST | `/api/persona` | Switch persona |
-| GET | `/api/world/systems` | Star systems (paginated) |
-| GET | `/api/world/systems/xyz` | Systems with 3-D coordinates |
-| GET | `/api/world/confidence` | Confidence & uncertainty data |
-| GET | `/api/runs/manifest` | Pipeline ingest runs |
-| GET | `/api/runs/validation/<id>` | Validation results for a run |
-| GET | `/api/simulation/<id>/snapshot` | Simulation state snapshot |
-| GET | `/api/simulation/<id>/events` | Simulation event log |
-| POST | `/api/simulation/<id>/pause` | Pause simulation |
-| POST | `/api/simulation/<id>/resume` | Resume simulation |
-| POST | `/api/simulation/<id>/step` | Advance simulation N ticks |
-| GET | `/api/health` | DB status & route count |
+- **Zero credentials in source** — all secrets loaded from `.env` (gitignored).
+- **`.env.example`** committed as a template with empty password fields.
+- **Flask secret key** auto-generated at startup via `secrets.token_hex(32)`.
+- **No private IPs, SSH keys, or API tokens** anywhere in the repository.
 
 ---
 
-## Docker (optional)
+## Contributing
 
-```bash
-docker-compose up --build
-```
+This project is in active development. Check [00_ARCHITECTURE/](00_ARCHITECTURE/) for system design and [05_DOCS/00_SCOPE/](05_DOCS/00_SCOPE/) for the product roadmap.
 
 ---
 
