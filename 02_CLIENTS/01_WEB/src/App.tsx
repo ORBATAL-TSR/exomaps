@@ -4,6 +4,7 @@ import TopNav from './components/TopNav';
 import StarMapPage from './pages/StarMapPage';
 import AdminPage from './pages/AdminPage';
 import SimulationPage from './pages/SimulationPage';
+import CampaignPage from './pages/CampaignPage';
 import DataQAPage from './pages/DataQAPage';
 import './App.css';
 
@@ -32,6 +33,7 @@ function App() {
                 <main className="app-main">
                   <Routes>
                     <Route path="/" element={<StarMapPage />} />
+                    <Route path="/campaigns" element={<CampaignPage />} />
                     <Route path="/admin" element={<AdminPage />} />
                     <Route path="/simulation" element={<SimulationPage />} />
                     <Route path="/data-qa" element={<DataQAPage />} />

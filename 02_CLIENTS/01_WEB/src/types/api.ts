@@ -263,3 +263,87 @@ export interface PlanetSummaryResponse {
   systems: PlanetSummary[];
   total_systems: number;
 }
+
+/* ── Campaign types ────────────────────────────────── */
+
+export interface Campaign {
+  id: string;
+  name: string;
+  seed: number;
+  status: 'active' | 'paused' | 'archived';
+  owner_id: string | null;
+  settings: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  explored_count?: number;
+  faction_count?: number;
+}
+
+export interface CampaignListResponse {
+  campaigns: Campaign[];
+  total: number;
+}
+
+export interface CampaignMapSystem {
+  system_id: string;
+  scan_level: number;
+  explored_by: string | null;
+  explored_at: string;
+  notes: string | null;
+}
+
+export interface CampaignMapResponse {
+  campaign_id: string;
+  systems: CampaignMapSystem[];
+  total_explored: number;
+}
+
+export interface ExploreSystemResponse {
+  campaign_id: string;
+  system_id: string;
+  scan_level: number;
+  explored_by: string | null;
+  explored_at: string;
+  is_new: boolean;
+}
+
+export interface ExplorationDetail {
+  campaign_id: string;
+  system_id: string;
+  scan_level: number;
+  explored_by: string | null;
+  explored_at: string;
+  notes: string | null;
+}
+
+export interface Faction {
+  id: string;
+  campaign_id: string;
+  name: string;
+  color: string;
+  home_system_id: string | null;
+  created_at: string;
+}
+
+export interface FactionListResponse {
+  campaign_id: string;
+  factions: Faction[];
+}
+
+export interface SimInitResponse {
+  campaign_id: string;
+  status: string;
+  tick: number;
+}
+
+export interface SimTickResponse {
+  campaign_id: string;
+  tick: number;
+  events: unknown[];
+}
+
+export interface SimSnapshotResponse {
+  campaign_id: string;
+  tick: number;
+  state: Record<string, unknown>;
+}

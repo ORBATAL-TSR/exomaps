@@ -9,7 +9,7 @@ platform-specific code isolated and shared code extracted.
 ```
 02_CLIENTS/
 ├── 01_WEB/        React / TypeScript / Three.js SPA          ← LIVE
-├── 02_DESKTOP/    Tauri + wry WebView + native GPU layer      ← PLANNED
+├── 02_DESKTOP/    Tauri 2.10 + R3F + GLSL procedural worlds  ← LIVE (primary)
 ├── 03_MOBILE/     React Native with reduced GL views          ← PLANNED
 └── SHARED/        Cross-platform: types, API SDK, shaders     ← PLANNED
 ```
@@ -187,114 +187,272 @@ sRGB color using a blackbody curve approximation:
 
 ---
 
-## 02_DESKTOP — Tauri + Native GPU (Planned)
+## 02_DESKTOP — Tauri 2.10 + React Three Fiber (Live)
+
+The **primary development client** as of March 2026. A native desktop application
+built on Tauri 2.10 with the full React UI running in a wry WebView. All 3D
+rendering uses React Three Fiber + custom GLSL shaders in WebGL2. The wgpu/Vulkan
+backend handles window management and GPU surface allocation.
 
 ### Why Tauri over Electron
 
-| Factor | Electron | Tauri |
-|--------|----------|-------|
+| Factor | Electron | Tauri 2.10 |
+|--------|----------|------------|
 | Binary size | ~120 MB | ~5 MB |
 | Memory | ~200 MB baseline | ~30 MB baseline |
-| GPU access | Via Chromium WebGL only | wry WebView + native GPU sidecar |
+| GPU access | Chromium WebGL only | wry WebView + wgpu/Vulkan surface |
 | Backend | Node.js | Rust (performance, safety) |
-| Hot reload | Yes | Yes (WebView) |
+| Hot reload | Yes | Yes (Vite HMR via WebView) |
 | OS integration | Good | Better (native menus, tray, file dialogs) |
+
+### Stack
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| Runtime | Tauri | 2.10 |
+| GPU backend | wgpu | Vulkan (GTX 1080 tested) |
+| WebView | wry | System WebKitGTK (Linux) |
+| Framework | React + TypeScript | 19 + 5.9 |
+| 3-D | Three.js + R3F + drei | 0.183 / 9.5 / 10.7 |
+| Build | Vite | 5.4.14 |
+| Dev URL | localhost:1420 | — |
+| API backend | Flask | 3.x on :5000 |
 
 ### Architecture
 
 ```
 02_DESKTOP/
 ├── src-tauri/
-│   ├── main.rs              Tauri bootstrap + IPC commands
-│   ├── gpu/
-│   │   ├── renderer.rs      wgpu/Vulkan renderer for planet generation
-│   │   ├── compute.rs       GPU compute shaders for atmosphere sim
-│   │   └── shared_memory.rs SharedArrayBuffer bridge to WebView
-│   ├── simulation/
-│   │   ├── atmosphere.rs    Radiative transfer, GCM approximation
-│   │   ├── composition.rs   Bulk silicate / iron / volatile fractions
-│   │   └── geology.rs       Tectonic regime, volcanism, cryovolcanism
-│   └── cache/
-│       └── world_state.rs   Offline world-state cache (SQLite)
-├── src/                     WebView UI (reuses 01_WEB React components)
-│   ├── App.tsx
-│   ├── hooks/useTauriGPU.ts IPC bridge to native GPU renderer
-│   └── components/          Desktop-specific UI (multi-viewport, etc.)
-└── shared-textures/         High-res texture atlases (>web size budget)
+│   ├── src/main.rs          Tauri bootstrap + window config
+│   ├── Cargo.toml           Rust dependencies
+│   └── target/debug/        Dev binary (exomaps-desktop)
+├── src/                     WebView UI (React + R3F)
+│   ├── App.tsx              Root module, React Router
+│   ├── components/
+│   │   ├── SystemFocusView.tsx   ★ Main system explorer (~2900 LOC)
+│   │   ├── ProceduralPlanet.tsx  ★ GLSL planet renderer (~2400 LOC)
+│   │   ├── ColonyOverlay.tsx     Colony buildings, roads, GLB models
+│   │   ├── ColonyTerrain.ts      Heightfield, A* pathfinding, territory
+│   │   ├── StarMap.tsx           Instanced star field (1,600+ stars)
+│   │   └── ...
+│   ├── hooks/                React hooks for state, API, camera
+│   └── styles/               CSS modules
+├── public/                   Static assets
+├── package.json
+├── vite.config.ts
+└── tsconfig.json
 ```
 
-### Hybrid Rendering Model
+### Rendering Model
 
-The desktop client uses a **dual-renderer** approach:
-
-1. **WebView (wry)** — Renders the React UI, star map, and 2D panels using
-   the same web codebase. Chromium's WebGL2 handles the star field.
-
-2. **Native GPU sidecar (wgpu)** — Dedicated compute + render pipeline for:
-   - High-fidelity procedural planet generation (see below)
-   - Atmosphere simulation (radiative transfer)
-   - Volumetric effects (nebulae, protoplanetary discs)
-   - Terrain heightfield generation at km-scale resolution
-
-Communication between WebView and GPU sidecar via Tauri IPC (command
-invocations returning serialized buffers or shared textures).
-
-### Procedural Planet Generation (Desktop-tier)
-
-Not random — **procedural and physically simulated**. Each planet is deterministically
-generated from its orbital + stellar parameters using scientific models.
-
-#### Generation Pipeline
+All rendering happens in the wry WebView via WebGL2. No Rust-side GPU sidecar.
+Three.js `ShaderMaterial` with custom GLSL handles all procedural generation.
 
 ```
-Star Parameters (Teff, L, age, metallicity)
-  +  Planet Parameters (mass, sma, eccentricity)
-        │
-        ▼
-  ┌─────────────────────────────────────────┐
-  │  1. BULK COMPOSITION                     │
-  │     Iron/silicate/volatile fractions     │
-  │     from mass + formation distance        │
-  │     (Zeng et al. 2019 mass-radius)       │
-  ├─────────────────────────────────────────┤
-  │  2. ATMOSPHERE MODEL                     │
-  │     • Equilibrium temperature from L, a  │
-  │     • Bond albedo from composition       │
-  │     • Greenhouse effect (CO2, H2O, CH4) │
-  │     • Scale height, surface pressure     │
-  │     • Rayleigh scattering color          │
-  ├─────────────────────────────────────────┤
-  │  3. SURFACE / TERRAIN                    │
-  │     • Tectonic regime from mass + age    │
-  │     • Multi-octave noise heightfield     │
-  │     • Crater density from age + atm      │
-  │     • Ocean coverage if T_surf ∈ [273,373]│
-  ├─────────────────────────────────────────┤
-  │  4. GPU TEXTURE SYNTHESIS               │
-  │     • Compute shader: noise → heightmap  │
-  │     • Compute shader: heightmap → albedo │
-  │     • Compute shader: atmosphere LUT     │
-  │     • Render: planet sphere + atm shell  │
-  └─────────────────────────────────────────┘
+Flask API (:5000)
+     │  /api/system/<id>  /api/world/systems/full
+     │
+     ▼
+React State (system data, planets, moons, belts)
+     │
+     ▼
+SystemFocusView.tsx — Camera, orrery, depth navigation, UI
+     │
+     ├─── StarMap.tsx (instanced points, spectral GLSL)
+     ├─── ProceduralPlanet.tsx (per-planet GLSL sphere)
+     ├─── ColonyOverlay.tsx (buildings, roads on colonies)
+     └─── ColonyTerrain.ts (heightfield, pathfinding)
 ```
 
-#### TRAPPIST-1 Test Case
+### SystemFocusView — Multi-Depth Explorer
 
-TRAPPIST-1 is the ideal validation target — 7 known planets, well-characterized:
+The system explorer uses a **depth-based navigation model** where the camera
+and UI adapt to the current viewing level:
 
-| Planet | Mass (M⊕) | Radius (R⊕) | Flux (S⊕) | Expected Surface |
-|--------|-----------|-------------|-----------|-----------------|
-| b | 1.37 | 1.12 | 4.25 | Magma ocean / tidally locked |
-| c | 1.38 | 1.10 | 2.27 | Venus-like thick atm |
-| d | 0.39 | 0.79 | 1.14 | Thin atm, possible water |
-| e | 0.69 | 0.92 | 0.66 | **Best HZ candidate**, ocean? |
-| f | 1.04 | 1.05 | 0.38 | Cold, possible subsurface ocean |
-| g | 1.32 | 1.13 | 0.26 | Ice giant surface |
-| h | 0.33 | 0.78 | 0.13 | Frozen, minimal atm |
+| Depth | View | Camera | Content |
+|-------|------|--------|---------|
+| `system` | Full star system | Overhead orrery | All planets as spheres on orbital tracks |
+| `planet` | Planet + moon system | Close-up planet orrery | Planet at center, moons orbiting |
+| `surface` | Planet surface | Fixed close sphere | Full GLSL terrain, atmosphere |
+| `colony` | Colony overlay | Top-down colony view | Buildings, roads, territory zones |
 
-The desktop generator should produce visuals that match these expectations
-without hardcoding — the physics pipeline alone should yield magma-world → temperate
-→ ice-world gradient across the system.
+Navigation via sidebar tree (star → planets → moons) or breadcrumb bar.
+**Star name in sidebar now clickable** — returns to system-level view.
+
+### Collision-Aware Moon Layout
+
+Moon orrery positions are computed by `layoutMoonOrbits()`:
+1. Sort moons by real orbital radius
+2. Map to logarithmic scene-space positions (k = 6/maxAU, spread = 1.4)
+3. Enforce minimum separation = sum of visual radii + 0.06 gap
+4. Push apart overlapping moons outward
+5. `detectResonance()` helper identifies orbital resonance patterns (2:1, 3:2, etc.)
+
+### Tidal Lock Filtering
+
+Tidally locked planets realistically have no significant moons (Roche limit
+disruption over Gyr timescales):
+- Moon list filtered to only `captured-irregular` moons with radius < 0.003 R⊕
+- Sidebar moon badge suppressed for tidally locked planets
+
+---
+
+### ProceduralPlanet — GLSL Procedural Generation
+
+Each planet is a `<mesh>` with custom `ShaderMaterial` (vertex + fragment GLSL).
+No textures — everything is procedurally generated from orbital/stellar parameters.
+
+#### Planet Type Profiles
+
+40+ planet type profiles defined in the `V` record, covering:
+
+| Category | Types |
+|----------|-------|
+| Rocky | Mercury-like, Mars-like, Earth-like, Venus-like, super-Earth |
+| Sub-Earth | Barren, thin-atm, icy |
+| Volatile | Ocean world, water world |
+| Gas | Mini-Neptune, sub-Neptune, Neptune-like, warm Neptune |
+| Giant | Hot Jupiter, warm Jupiter, cold gas giant, super-Jupiter |
+| Dwarf / Ice | Pluto-like, Kuiper analogue, Oort body |
+| Exotic | Lava world, carbon planet, iron planet, hycean |
+| Tidally locked | Eyeball variants (hot, warm, cold) |
+
+#### World Genome System
+
+A 3-slot combinatorial system that generates visual diversity:
+
+- **20 Surface Regimes** — volcanic, cratered, tectonic, eroded, glacial, etc.
+- **11 Atmosphere Characters** — clear, hazy, stormy, banded, toxic, etc.
+- **9 Hydrosphere States** — dry, scattered lakes, archipelago, deep ocean, etc.
+
+Seed-deterministic slot selection. Genome parameters blend at 70% weight with
+base profile values for unique per-planet appearances.
+
+#### `deriveWorldVisuals()` Pipeline
+
+The central function that translates physical parameters into GLSL uniforms:
+
+```
+Input: planetType, temperature, mass, tidalHeating, tidallyLocked,
+       starLuminosity, orbitalRadius, seed
+
+  ┌──────────────────────────────────────────┐
+  │  1. BASE PROFILE LOOKUP (V record)       │
+  │     40+ type profiles with defaults       │
+  ├──────────────────────────────────────────┤
+  │  2. WORLD GENOME BLEND (70% weight)      │
+  │     Surface + Atmosphere + Hydrosphere    │
+  ├──────────────────────────────────────────┤
+  │  3. FROST-LINE COLD TRANSFORM            │
+  │     temp < 200K → colors → ice-white/blue │
+  │     Up to 85% override at 60K             │
+  │     iceCaps → 0.95, volcanism suppressed   │
+  ├──────────────────────────────────────────┤
+  │  4. TERRAIN AGE DERIVATION               │
+  │     mass/tidal/volcanism/temp → age 0-1   │
+  │     Ancient: craters, erosion, weathering  │
+  │     Young: smooth, volcanic, few craters   │
+  ├──────────────────────────────────────────┤
+  │  5. TECTONICS LEVEL DERIVATION           │
+  │     Mass onset > 0.3 M⊕, tidal boost     │
+  │     Drives: mountains, valleys, faults     │
+  ├──────────────────────────────────────────┤
+  │  6. HSV COLOR SHIFTS                      │
+  │     Seed-deterministic hue/sat/val offsets │
+  │     ±12° hue, ±0.12 sat, ±0.12 val        │
+  └──────────────────────────────────────────┘
+
+Output: PlanetVisuals (colors, uniforms, flags)
+        → fed to GLSL ShaderMaterial
+```
+
+#### GLSL Shader Architecture
+
+**Vertex Shader:**
+- Multi-octave simplex noise heightfield
+- Displacement: `(max(h, oceanLevel) - 0.5) * 0.055`
+- Seed-consistent: `seed * 137.0`
+- Crater, mountain, valley, volcanism displacement modifiers
+
+**Fragment Shader — Terrain:**
+- 6-biome palette blending based on elevation + latitude + slope
+- Star-dependent vegetation overlay (M-star burgundy → G-star green → A-star golden)
+- Vegetation suppression per biome (desert/ice/lava zones)
+
+**Fragment Shader — Age & Tectonics (NEW):**
+- `uTerrainAge` uniform: space-weathered darkening (ancient), micro-crater peppering,
+  fresh volcanic flows (young), eroded mountain peaks
+- `uTectonics` uniform: linear fault scarps, folded mountain textures at elevation,
+  mountain/valley height modulation
+
+**Fragment Shader — Tidally Locked Eyeball (conditional):**
+- Substellar point: scorched/glassed surface at extreme heat
+- Antistellar point: deep ice, nitrogen frost patches, cryovolcanic venting
+- Terminator band: habitable-zone green/liquid (widened for realism)
+- Ice mask coverage: starts at facing = 0.15, full at -0.65
+
+**Fragment Shader — Ocean Depth Transparency (NEW):**
+- Shallow water: semi-transparent, shows seafloor terrain beneath
+- Deep water: opaque water color
+- Blend: `waterOpacity = smoothstep(0.0, 0.35, depth)`
+- Seafloor darkened by 0.75 factor for submarine look
+
+**Fragment Shader — Other Effects:**
+- Temperature-mapped mineral overlays (iron, silicate, water ice, KREEP, carbon)
+- Cloud layer noise (density-driven)
+- Ice cap polar regions
+- Emissive glow for hot planets (T > 800K)
+
+#### Atmosphere Rendering
+
+**Standard atmosphere:** Single semi-transparent shell at radius 1.015 + thickness × 0.04.
+Uses dedicated ATM_VERT / ATM_FRAG shaders with sun-directed Fresnel scattering.
+
+**Thick atmosphere (NEW — Venus types, atmThickness > 0.60):**
+Multi-shell volumetric cloud decks:
+
+| Shell | Radius | Role | Side |
+|-------|--------|------|------|
+| Inner haze | 1.008 + depth×0.015 | Dense, dark-tinted base layer | DoubleSide |
+| Middle deck | 1.020 + depth×0.035 | Main visible cloud layer, brightest | FrontSide |
+| Outer haze | 1.040 + depth×0.05 | High-altitude diffuse veil (if > 0.75) | FrontSide |
+
+Each shell is a `ShaderMaterial` mesh with independent color tint and opacity
+derived from `atmThickness`. Creates a convincing Venus/Titan layered-atmosphere look.
+
+#### Star-Dependent Vegetation Colors
+
+The `foliageColor` useMemo computes vegetation tint from host star's spectral class:
+
+| Star Type | Vegetation Color | Rationale |
+|-----------|-----------------|-----------|
+| M (red dwarf) | Near-black burgundy | Absorbs all available red/NIR photons |
+| K (orange) | Warm olive-brown | Broader absorption than M, less green |
+| G (Sun-like) | Earth green | Chlorophyll a/b optimized for G-star peak |
+| F (yellow-white) | Chartreuse | Shifted toward blue-sensitive pigments |
+| A (white) | Golden-olive | UV-stressed, carotenoid-heavy protection |
+
+Vegetation is suppressed for: gas giants, ocean-level < 0.1, atmosphere < 0.15,
+temperature outside 180–400 K range.
+
+---
+
+### Colony System
+
+The surface/colony depth levels support an in-development colony builder:
+
+**ColonyOverlay.tsx** (~683 LOC):
+- Building placement on terrain surface
+- GLB model import for structures
+- Road network rendering (Catmull-Rom spline smoothing)
+- Territory zones of control with jittered-corner borders
+
+**ColonyTerrain.ts** (~766 LOC):
+- 256×128 heightfield grid (JS port of the GLSL noise, seed × 137.0)
+- A* pathfinding with 70% road cost discount
+- Territory flood-fill from building positions
+- Coastline detection + rendering
+- Road-aware pathfinding (existing roads reduce traversal cost)
 
 ### "Game" Mode — Single-System Focus
 
@@ -509,8 +667,8 @@ visibility buffers uploaded as a texture or SSBO.
 | Phase | Client | Status | Key Milestone |
 |-------|--------|--------|--------------|
 | 1 | Web (01_WEB) | **LIVE** | Full 3D star map, planetary system viewer, fullscreen mode |
-| 2 | Shared SDK | PLANNED | Extract types, API, shaders to SHARED/ |
-| 3 | Desktop (02_DESKTOP) | PLANNED | Tauri scaffold, WebView reuse, GPU planet gen prototype |
+| 2 | Desktop (02_DESKTOP) | **LIVE** | Tauri 2.10, GLSL procedural planets, colony builder, multi-depth explorer |
+| 3 | Shared SDK | PLANNED | Extract types, API, shaders to SHARED/ |
 | 4 | Mobile (03_MOBILE) | PLANNED | RN scaffold, 2D map, card-based drill-down |
-| 5 | Desktop GPU | PLANNED | wgpu compute shaders, atmosphere sim, TRAPPIST-1 validation |
-| 6 | Game mode | PLANNED | Single-system focus, faction system, real-time multiplayer |
+| 5 | Desktop GPU sidecar | PLANNED | wgpu compute shaders, atmosphere sim, TRAPPIST-1 validation |
+| 6 | Game mode | IN PROGRESS | Single-system focus, colony builder, faction system |

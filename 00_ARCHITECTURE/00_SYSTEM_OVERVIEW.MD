@@ -22,9 +22,9 @@ Two realities, layered:
                     │                                                             │
                     │   ┌──────────┐   ┌──────────┐   ┌──────────┐              │
                     │   │  01_WEB  │   │02_DESKTOP│   │03_MOBILE │              │
-                    │   │React/TS  │   │ Electron │   │React Nat.│              │
-                    │   │Three.js  │   │ (planned)│   │(planned) │              │
-                    │   │ WebGL2   │   │          │   │          │              │
+                    │   │React/TS  │   │ Tauri 2  │   │React Nat.│              │
+                    │   │Three.js  │   │R3F/GLSL  │   │(planned) │              │
+                    │   │ WebGL2   │   │wgpu+Vulk │   │          │              │
                     │   └────┬─────┘   └────┬─────┘   └────┬─────┘              │
                     │        │              │              │                     │
                     │        └──────────┬───┴──────────────┘                     │
@@ -84,7 +84,7 @@ exomaps/
 │   └── 04_MESSAGING/         (planned) WebSocket relay, SQS, event bus
 ├── 02_CLIENTS/               Frontend applications
 │   ├── 01_WEB/               React / TypeScript / Three.js SPA
-│   ├── 02_DESKTOP/           (planned) Electron or Tauri
+│   ├── 02_DESKTOP/           Tauri 2.10 + R3F + custom GLSL (LIVE)
 │   ├── 03_MOBILE/            (planned) React Native
 │   └── SHARED/               Cross-client types, API SDK, assets
 ├── 03_DATA/                  All data concerns
@@ -159,9 +159,11 @@ exomaps/
 | ORM | SQLAlchemy | 2.x | Direct engine + raw SQL |
 | Database | PostgreSQL | 17 | 3 schemas, local peer auth |
 | Frontend language | TypeScript | 5.9 | All clients |
-| UI framework | React | 19 | Web SPA |
+| UI framework | React | 19 | Web SPA + Desktop WebView |
 | 3-D engine | Three.js | 0.183 | WebGL2 + custom GLSL |
 | React-Three | @react-three/fiber | 9.5 | Declarative 3-D |
+| Desktop runtime | Tauri | 2.10 | wgpu/Vulkan, wry WebView, Rust backend |
+| Desktop GPU | wgpu | — | Vulkan (Linux), DirectX 12 (Win), Metal (macOS) |
 | HTTP client | Axios | 1.13 | API calls |
 | Routing | React Router | 7.x | Client-side SPA routing |
 | Realtime (planned) | Socket.IO / SQS | — | WebSocket + message queue |

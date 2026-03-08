@@ -7,7 +7,6 @@
  */
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import type {
-  PersonaResponse,
   SystemsResponse,
   FullSystemsResponse,
   ConfidenceResponse,
@@ -16,6 +15,7 @@ import type {
   SystemGroupResponse,
 } from '../types/api';
 import type {
+  PersonaResponse,
   RunsManifestResponse,
   ValidationResponse,
   HealthResponse,

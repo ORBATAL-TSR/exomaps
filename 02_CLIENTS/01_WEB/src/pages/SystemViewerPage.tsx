@@ -21,6 +21,7 @@ import type {
 import { getSystemGroup, getSystemDetail } from '../services/api';
 
 const OrrerySceneFull = lazy(() => import('../components/OrrerySceneFull'));
+const PlanetSurfaceView = lazy(() => import('../components/PlanetSurfaceView'));
 
 /* ── Colour constants ─────────────────────────────── */
 const SPECTRAL_STAR_COLOR: Record<string, string> = {
@@ -146,6 +147,7 @@ export default function SystemViewerPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeStarIdx, setActiveStarIdx] = useState(0);
   const [selectedPlanetIdx, setSelectedPlanetIdx] = useState<number>(-1);
+  const [showSurface, setShowSurface] = useState(false);
 
   const mainId = id ? decodeURIComponent(id) : '';
 
@@ -310,7 +312,15 @@ export default function SystemViewerPage() {
               planet={p}
               hz={activeStar.habitable_zone}
               selected={selectedPlanetIdx === i}
-              onClick={() => setSelectedPlanetIdx(selectedPlanetIdx === i ? -1 : i)}
+              onClick={() => {
+                if (selectedPlanetIdx === i) {
+                  setSelectedPlanetIdx(-1);
+                  setShowSurface(false);
+                } else {
+                  setSelectedPlanetIdx(i);
+                  setShowSurface(true);
+                }
+              }}
             />
           ))}
 
@@ -344,18 +354,65 @@ export default function SystemViewerPage() {
         </div>
       </div>
 
-      {/* Main viewport — fullscreen orrery */}
-      <div style={{ flex: 1, position: 'relative' }}>
-        <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563' }}>Loading orrery…</div>}>
-          <OrrerySceneFull
-            planets={sortedPlanets}
-            belts={activeStar.belts}
-            hz={activeStar.habitable_zone}
-            disc={activeStar.protoplanetary_disc}
-            starColor={starColor(activeStar.star.spectral_class)}
-            selectedPlanet={selectedPlanet?.planet_name ?? null}
-          />
-        </Suspense>
+      {/* Main viewport — orrery + optional planet surface */}
+      <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
+        {/* PBR Planet Surface (top half when active) */}
+        {showSurface && selectedPlanet && (
+          <div style={{ height: '50%', borderBottom: '1px solid #1f2937' }}>
+            <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563', background: '#030712' }}>Loading surface…</div>}>
+              <PlanetSurfaceView
+                planet={selectedPlanet}
+                hz={activeStar.habitable_zone}
+                starSpectralClass={activeStar.star.spectral_class}
+                onClose={() => setShowSurface(false)}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {/* Orrery (full height or bottom half) */}
+        <div style={{ flex: 1, position: 'relative' }}>
+          <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563' }}>Loading orrery…</div>}>
+            <OrrerySceneFull
+              planets={sortedPlanets}
+              belts={activeStar.belts}
+              hz={activeStar.habitable_zone}
+              disc={activeStar.protoplanetary_disc}
+              starColor={starColor(activeStar.star.spectral_class)}
+              selectedPlanet={selectedPlanet?.planet_name ?? null}
+            />
+          </Suspense>
+
+          {/* Surface view toggle button */}
+          {selectedPlanet && !showSurface && (
+            <button
+              onClick={() => setShowSurface(true)}
+              style={{
+                position: 'absolute',
+                top: 10,
+                right: 10,
+                background: 'rgba(17,24,39,0.9)',
+                border: '1px solid #374151',
+                borderRadius: 6,
+                color: '#d1d5db',
+                cursor: 'pointer',
+                padding: '6px 12px',
+                fontSize: 11,
+                fontWeight: 600,
+                fontFamily: 'Inter, sans-serif',
+                zIndex: 10,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.color = '#e5e7eb'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#374151'; e.currentTarget.style.color = '#d1d5db'; }}
+            >
+              <span style={{ fontSize: 14 }}>🌍</span> View Surface
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -120,6 +120,10 @@ mimetypes.add_type('application/javascript', '.mjs')
 from campaigns import campaigns_bp
 app.register_blueprint(campaigns_bp)
 
+# ── World Engine proxy blueprint ──
+from world_engine_proxy import engine_bp
+app.register_blueprint(engine_bp)
+
 # ── Module-level caches for star systems and planet data ──
 _systems_cache = None          # list of star-system dicts (populated on first request)
 _planet_cache = {}             # main_id → list of planet dicts (observed + inferred)
@@ -166,7 +170,13 @@ def _build_db_engine():
     logger.info(f'Connection URI: {database_uri.split("@")[0] if "@" in database_uri else database_uri.split("/")[0]}@...')
     
     try:
-        engine = create_engine(database_uri)
+        engine = create_engine(
+            database_uri,
+            pool_size=5,
+            max_overflow=10,
+            pool_recycle=1800,   # recycle connections after 30 min
+            pool_pre_ping=True,  # verify connections before checkout
+        )
         # Test the connection
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
@@ -218,6 +228,9 @@ def _build_db_engine_legacy():
     return None
 
 db = _build_db_engine()
+
+# Expose engine to Blueprints via app.config so they can use current_app
+app.config['DB_ENGINE'] = db
 
 
 def _db_status():
@@ -1099,10 +1112,39 @@ def api_world_systems_full():
 
 # ── Planet classification & inference helpers ──────────────────────
 
+# Extended 22-type planet taxonomy (see PHASE0_SYSTEMS_AND_FLOTILLA.MD §A2)
+_PLANET_TYPE_DEFS = {
+    'hot-jupiter':   {'mass': (100, 3000), 'radius': (10, 20),  'tag': 'giant'},
+    'warm-neptune':  {'mass': (10, 50),    'radius': (3, 6),    'tag': 'giant'},
+    'mini-neptune':  {'mass': (5, 15),     'radius': (2, 4),    'tag': 'giant'},
+    'sub-neptune':   {'mass': (2, 10),     'radius': (1.5, 3.5),'tag': 'volatile'},
+    'super-earth':   {'mass': (1.5, 10),   'radius': (1.2, 2.0),'tag': 'rocky'},
+    'earth-like':    {'mass': (0.5, 2.0),  'radius': (0.8, 1.3),'tag': 'rocky'},
+    'eyeball-world': {'mass': (0.5, 5.0),  'radius': (0.8, 1.8),'tag': 'exotic'},
+    'ocean-world':   {'mass': (1, 8),      'radius': (1.0, 2.5),'tag': 'exotic'},
+    'desert-world':  {'mass': (0.3, 3.0),  'radius': (0.7, 1.5),'tag': 'rocky'},
+    'lava-world':    {'mass': (0.1, 5.0),  'radius': (0.5, 1.8),'tag': 'exotic'},
+    'carbon-planet': {'mass': (0.5, 10),   'radius': (0.8, 2.0),'tag': 'exotic'},
+    'iron-planet':   {'mass': (0.5, 5.0),  'radius': (0.5, 1.2),'tag': 'rocky'},
+    'ice-dwarf':     {'mass': (0.001, 0.1),'radius': (0.1, 0.5),'tag': 'dwarf'},
+    'hycean':        {'mass': (2, 10),     'radius': (1.5, 3.0),'tag': 'exotic'},
+    'chthonian':     {'mass': (5, 50),     'radius': (1.5, 4.0),'tag': 'exotic'},
+    'rogue-capture': {'mass': (0.5, 500),  'radius': (0.5, 12), 'tag': 'exotic'},
+    'trojan-world':  {'mass': (0.01, 1.0), 'radius': (0.3, 1.0),'tag': 'dwarf'},
+    'sub-earth':     {'mass': (0.01, 0.5), 'radius': (0.2, 0.8),'tag': 'dwarf'},
+    'rocky':         {'mass': (0.3, 2.0),  'radius': (0.7, 1.2),'tag': 'rocky'},
+    'neptune-like':  {'mass': (10, 50),    'radius': (3, 5),    'tag': 'giant'},
+    'gas-giant':     {'mass': (50, 3000),  'radius': (8, 15),   'tag': 'giant'},
+    'super-jupiter': {'mass': (3000, 13000),'radius': (10, 15), 'tag': 'giant'},
+}
+
+
 def _classify_planet_type(mass_earth, radius_earth, sma_au):
-    """Classify a planet type from mass (Earth masses), radius, and SMA."""
+    """Classify planet type from mass/radius/SMA with extended taxonomy."""
     if mass_earth is not None:
         if mass_earth < 0.1:
+            return 'sub-earth'
+        elif mass_earth < 0.5:
             return 'sub-earth'
         elif mass_earth < 2.0:
             return 'rocky'
@@ -1115,7 +1157,9 @@ def _classify_planet_type(mass_earth, radius_earth, sma_au):
         else:
             return 'super-jupiter'
     if radius_earth is not None:
-        if radius_earth < 1.2:
+        if radius_earth < 0.8:
+            return 'sub-earth'
+        elif radius_earth < 1.2:
             return 'rocky'
         elif radius_earth < 2.5:
             return 'super-earth'
@@ -1124,6 +1168,78 @@ def _classify_planet_type(mass_earth, radius_earth, sma_au):
         else:
             return 'gas-giant'
     return 'unknown'
+
+
+def _refine_planet_type(base_type, mass_e, sma_au, temp_k, hz_in, hz_out,
+                        spectral_class, rng, exotic_weight=1.0):
+    """Apply sub-type refinement: eyeball, lava, ocean, hycean, etc.
+
+    Takes the base type from band selection and upgrades it to an exotic
+    type when physical conditions warrant it.  exotic_weight multiplies
+    the probability of exotic outcomes (from world-rules).
+    """
+    # Tidally locked eyeball worlds: M-dwarf HZ planets
+    if (base_type in ('rocky', 'super-earth', 'earth-like')
+            and spectral_class == 'M' and hz_in <= sma_au <= hz_out):
+        if rng.random() < 0.55 * exotic_weight:
+            return 'eyeball-world'
+
+    # Lava worlds: very hot, close-in
+    if temp_k > 1500 and base_type in ('rocky', 'super-earth', 'sub-earth'):
+        if rng.random() < 0.7 * exotic_weight:
+            return 'lava-world'
+
+    # Hot Jupiters: gas giants very close in AND actually irradiated
+    # Must receive significant stellar flux (temp > 700 K) — cold gas
+    # giants near faint stars are just regular gas/super-jupiters
+    if base_type in ('gas-giant', 'super-jupiter') and sma_au < 0.15 and temp_k > 700:
+        return 'hot-jupiter'
+
+    # Ocean worlds: HZ super-earths with high volatile fraction
+    if base_type in ('super-earth', 'earth-like') and hz_in * 0.8 <= sma_au <= hz_out * 1.3:
+        if rng.random() < 0.20 * exotic_weight:
+            return 'ocean-world'
+
+    # Hycean worlds: larger super-earths in warm zone
+    if base_type == 'super-earth' and mass_e > 3.0 and hz_in * 0.5 <= sma_au <= hz_out * 2.0:
+        if rng.random() < 0.12 * exotic_weight:
+            return 'hycean'
+
+    # Desert worlds: inner HZ edge, medium mass
+    if base_type in ('rocky', 'earth-like') and sma_au < hz_in * 1.1 and sma_au > hz_in * 0.5:
+        if rng.random() < 0.15 * exotic_weight:
+            return 'desert-world'
+
+    # Iron planets: very dense, close-in
+    if base_type in ('rocky', 'sub-earth') and sma_au < 0.3 and mass_e < 3.0:
+        if rng.random() < 0.10 * exotic_weight:
+            return 'iron-planet'
+
+    # Carbon planets: rare — carbon-rich chemical budget
+    if base_type in ('rocky', 'super-earth') and rng.random() < 0.03 * exotic_weight:
+        return 'carbon-planet'
+
+    # Warm neptunes
+    if base_type == 'neptune-like' and sma_au < 1.0:
+        if rng.random() < 0.3:
+            return 'warm-neptune'
+
+    # Mini-neptunes: lighter neptunes
+    if base_type == 'neptune-like' and mass_e < 20:
+        if rng.random() < 0.25:
+            return 'mini-neptune'
+
+    # Sub-neptunes: puffy, hydrogen-rich
+    if base_type == 'super-earth' and mass_e > 3.0:
+        if rng.random() < 0.15:
+            return 'sub-neptune'
+
+    # Earth-like upgrade for HZ rocky worlds
+    if base_type == 'rocky' and hz_in <= sma_au <= hz_out and 0.5 <= mass_e <= 2.0:
+        if rng.random() < 0.3 * exotic_weight:
+            return 'earth-like'
+
+    return base_type
 
 
 def _deterministic_seed(name: str) -> int:
@@ -1145,26 +1261,29 @@ def _hz_bounds(luminosity: float):
 # ── Inline inference engine (no DB dependency) ─────────────────────
 
 _INF_STELLAR_PRIORS = {
-    'O': {'planet_prob': 0.02, 'belt_prob': 0.10, 'avg_planets': 0.5},
-    'B': {'planet_prob': 0.03, 'belt_prob': 0.15, 'avg_planets': 0.8},
-    'A': {'planet_prob': 0.05, 'belt_prob': 0.20, 'avg_planets': 1.2},
-    'F': {'planet_prob': 0.60, 'belt_prob': 0.40, 'avg_planets': 2.5},
-    'G': {'planet_prob': 0.65, 'belt_prob': 0.45, 'avg_planets': 3.0},
-    'K': {'planet_prob': 0.55, 'belt_prob': 0.40, 'avg_planets': 2.5},
-    'M': {'planet_prob': 0.50, 'belt_prob': 0.30, 'avg_planets': 2.2},
-    'L': {'planet_prob': 0.10, 'belt_prob': 0.10, 'avg_planets': 0.5},
-    'T': {'planet_prob': 0.05, 'belt_prob': 0.05, 'avg_planets': 0.3},
+    'O': {'planet_prob': 0.15, 'belt_prob': 0.40, 'avg_planets': 2.0},
+    'B': {'planet_prob': 0.25, 'belt_prob': 0.50, 'avg_planets': 3.0},
+    'A': {'planet_prob': 0.40, 'belt_prob': 0.60, 'avg_planets': 4.0},
+    'F': {'planet_prob': 0.85, 'belt_prob': 0.90, 'avg_planets': 6.5},
+    'G': {'planet_prob': 0.90, 'belt_prob': 0.95, 'avg_planets': 8.0},
+    'K': {'planet_prob': 0.85, 'belt_prob': 0.90, 'avg_planets': 7.0},
+    'M': {'planet_prob': 0.80, 'belt_prob': 0.80, 'avg_planets': 5.5},
+    'L': {'planet_prob': 0.30, 'belt_prob': 0.40, 'avg_planets': 2.0},
+    'T': {'planet_prob': 0.15, 'belt_prob': 0.25, 'avg_planets': 1.0},
 }
 
 import random as _random
 
 
 def _infer_planets_for_star(main_id, spectral_class, luminosity, star_mass=None):
-    """Generate inferred planets for a single star, deterministically.
+    """Generate inferred planets with extended 22-type taxonomy.
 
-    Returns list of planet dicts compatible with observed planet records.
-    Planets are spread across Titius-Bode-like orbital bands, scaled
-    by the star's luminosity to push the habitable zone in/out.
+    Features:
+      - 10 orbital bands scaled by luminosity
+      - Exotic type refinement (eyeball, lava, ocean, hycean, etc.)
+      - Tidal locking detection for M-dwarf HZ planets
+      - Sub-type flags (tidally_locked, terminator_habitable, subsurface_ocean, etc.)
+      - Resonance chain detection between adjacent planet pairs
     """
     rng = _random.Random(_deterministic_seed(main_id))
     prior = _INF_STELLAR_PRIORS.get(spectral_class, _INF_STELLAR_PRIORS['G'])
@@ -1172,22 +1291,25 @@ def _infer_planets_for_star(main_id, spectral_class, luminosity, star_mass=None)
     if rng.random() > prior['planet_prob']:
         return []
 
-    num = max(1, round(rng.gauss(prior['avg_planets'], 0.8)))
-    num = min(num, 6)
+    num = max(2, round(rng.gauss(prior['avg_planets'], 1.5)))
+    num = min(num, 12)
 
     lum = max(luminosity, 0.0001)
-    lum_scale = math.sqrt(lum)   # scale orbital radii with luminosity
+    lum_scale = math.sqrt(lum)
     hz_in, hz_out = _hz_bounds(luminosity)
 
-    # Orbital bands scaled by luminosity
+    # Orbital bands scaled by luminosity — 10 bands
     bands = [
-        # (inner_au, outer_au, type_choices, mass_lo, mass_hi, rad_lo, rad_hi)
-        (0.1 * lum_scale, 0.4 * lum_scale, ['rocky', 'sub-earth'], 0.05, 1.5, 0.4, 1.2),
-        (hz_in * 0.7, hz_in, ['rocky', 'super-earth'], 0.5, 3.0, 0.8, 1.6),
-        (hz_in, hz_out, ['rocky', 'super-earth'], 0.5, 4.0, 0.9, 1.8),
-        (hz_out, hz_out * 2.5, ['super-earth', 'neptune-like'], 3.0, 20.0, 1.5, 4.5),
-        (3.0 * lum_scale, 12.0 * lum_scale, ['gas-giant', 'neptune-like'], 30.0, 600.0, 4.0, 13.0),
-        (12.0 * lum_scale, 35.0 * lum_scale, ['gas-giant', 'neptune-like'], 10.0, 200.0, 3.0, 10.0),
+        (0.02 * lum_scale, 0.1 * lum_scale,  ['sub-earth', 'rocky'],               0.01, 0.8,   0.3, 0.9),
+        (0.1 * lum_scale,  0.4 * lum_scale,  ['rocky', 'sub-earth'],               0.05, 1.5,   0.4, 1.2),
+        (0.4 * lum_scale,  hz_in * 0.9,      ['rocky', 'super-earth'],             0.3,  3.0,   0.7, 1.5),
+        (hz_in * 0.7,      hz_in,            ['rocky', 'super-earth', 'earth-like'], 0.5, 3.0,  0.8, 1.6),
+        (hz_in,            hz_out,           ['rocky', 'super-earth', 'earth-like'], 0.5, 4.0,  0.9, 1.8),
+        (hz_out,           hz_out * 2.0,     ['super-earth', 'neptune-like'],       3.0, 20.0,  1.5, 4.5),
+        (hz_out * 2.0,     4.0 * lum_scale,  ['neptune-like', 'super-earth'],       5.0, 30.0,  2.0, 5.0),
+        (3.0 * lum_scale,  8.0 * lum_scale,  ['gas-giant', 'super-jupiter'],       50.0, 800.0, 5.0, 14.0),
+        (8.0 * lum_scale,  18.0 * lum_scale, ['gas-giant', 'neptune-like'],        20.0, 400.0, 3.5, 11.0),
+        (18.0 * lum_scale, 40.0 * lum_scale, ['neptune-like', 'gas-giant'],         8.0, 150.0, 2.5, 8.0),
     ]
 
     used_sma = []
@@ -1204,20 +1326,125 @@ def _infer_planets_for_star(main_id, spectral_class, luminosity, star_mass=None)
             continue
         sma = round(rng.uniform(inner, outer), 4)
 
-        # avoid collisions
         if any(abs(sma - u) < 0.1 * lum_scale for u in used_sma):
             continue
         used_sma.append(sma)
 
-        ptype = rng.choice(type_choices)
+        base_type = rng.choice(type_choices)
         mass_e = round(rng.uniform(m_lo, m_hi), 3)
         rad_e = round(rng.uniform(r_lo, r_hi), 3)
         period = round(365.25 * (sma ** 1.5) / max(math.sqrt(star_mass or 1.0), 0.1), 2)
         ecc = round(rng.uniform(0, 0.15 if sma < 2 else 0.35), 3)
-
-        # Equilibrium temperature: T_eq ≈ T_star * sqrt(R_star / 2*SMA)
-        # Simplified: use luminosity-based estimate
         temp_k = round(278.5 * (lum ** 0.25) / math.sqrt(max(sma, 0.01)), 1)
+
+        # ── Exotic type refinement ──
+        ptype = _refine_planet_type(
+            base_type, mass_e, sma, temp_k, hz_in, hz_out,
+            spectral_class, rng, exotic_weight=1.0,
+        )
+
+        # Adjust mass/radius to match refined type
+        tdef = _PLANET_TYPE_DEFS.get(ptype)
+        if tdef and ptype != base_type:
+            mass_e = round(rng.uniform(*tdef['mass']), 3)
+            rad_e = round(rng.uniform(*tdef['radius']), 3)
+            # Recompute temp if mass changed the orbit dynamics
+            temp_k = round(278.5 * (lum ** 0.25) / math.sqrt(max(sma, 0.01)), 1)
+
+        # ── Sub-type flags ──
+        sub_flags = []
+        tidally_locked = False
+
+        # Tidal locking: close-in planets around M/K dwarfs
+        tidal_lock_radius = 0.3 * lum_scale  # rough tidal locking radius
+        if spectral_class in ('M', 'K') and sma < tidal_lock_radius:
+            tidally_locked = True
+            sub_flags.append('tidally_locked')
+            if hz_in <= sma <= hz_out:
+                sub_flags.append('terminator_habitable')
+
+        if ptype == 'eyeball-world':
+            sub_flags.append('permanent_dayside')
+            sub_flags.append('ice_nightside')
+
+        if ptype == 'ocean-world':
+            sub_flags.append('global_ocean')
+            if mass_e > 3.0:
+                sub_flags.append('high_pressure_ice_mantle')
+
+        if ptype == 'lava-world':
+            sub_flags.append('magma_ocean')
+            sub_flags.append('silicate_atmosphere')
+
+        if ptype == 'hycean':
+            sub_flags.append('hydrogen_envelope')
+            sub_flags.append('deep_ocean')
+
+        if ptype == 'carbon-planet':
+            sub_flags.append('graphite_surface')
+            sub_flags.append('diamond_mantle')
+
+        if ptype == 'iron-planet':
+            sub_flags.append('stripped_mantle')
+            sub_flags.append('metallic_surface')
+
+        if ptype in ('gas-giant', 'super-jupiter', 'hot-jupiter'):
+            if rng.random() < 0.6:
+                sub_flags.append('banded_atmosphere')
+            if rng.random() < 0.2:
+                sub_flags.append('great_storm')
+
+        if hz_in <= sma <= hz_out and ptype in ('rocky', 'super-earth', 'earth-like'):
+            sub_flags.append('habitable_zone')
+            if rng.random() < 0.3:
+                sub_flags.append('possible_biosignatures')
+
+        # ── Spin-orbit resonance ──
+        # Tidally locked worlds: most are 1:1, some show 3:2 (Mercury-like) if ecc > 0.1
+        spin_orbit = None
+        rotation_period_days = None
+        if tidally_locked:
+            if ecc > 0.1 and rng.random() < 0.35:
+                spin_orbit = '3:2'
+                rotation_period_days = round(period * 2 / 3, 3)
+                sub_flags.append('spin_orbit_3_2')
+            else:
+                spin_orbit = '1:1'
+                rotation_period_days = round(period, 3)
+                sub_flags.append('spin_orbit_1_1')
+        else:
+            # Free rotation — estimate from mass/age
+            # Larger planets tend to rotate faster (conservation of angular momentum)
+            base_rot = 24.0  # Earth hours
+            if ptype in ('gas-giant', 'super-jupiter', 'hot-jupiter'):
+                base_rot = 8 + rng.uniform(0, 6)
+            elif ptype in ('neptune-like', 'warm-neptune', 'mini-neptune', 'sub-neptune'):
+                base_rot = 14 + rng.uniform(0, 8)
+            elif mass_e > 5:
+                base_rot = 12 + rng.uniform(0, 8)
+            elif mass_e > 1:
+                base_rot = 18 + rng.uniform(0, 12)
+            else:
+                base_rot = 24 + rng.uniform(-8, 40)
+            rotation_period_days = round(base_rot / 24.0, 4)
+
+        # ── Temperature distribution model ──
+        # Estimate atmospheric thickness from planet type
+        _atm_est = 0.8 if ptype in ('gas-giant','super-jupiter','hot-jupiter',
+                   'neptune-like','warm-neptune','mini-neptune','sub-neptune') else \
+                   0.6 if ptype in ('earth-like','hycean','ocean-world') else \
+                   0.3 if ptype in ('super-earth','rocky') and mass_e > 0.5 and temp_k < 700 else \
+                   0.05
+        temp_distribution = _compute_temp_distribution(
+            temp_k, tidally_locked, spin_orbit, ptype, mass_e,
+            _atm_est, ecc, rng
+        ) if temp_k else None
+
+        # ── Mineral / element abundances ──
+        _met = 0.0  # default solar metallicity for inferred
+        mineral_abundance = _compute_mineral_abundance(
+            ptype, mass_e, rad_e, temp_k, sma, _met, rng
+        )
 
         letter = chr(ord('b') + len(inferred))
         planet_name = f"{main_id} {letter} (inferred)"
@@ -1231,7 +1458,7 @@ def _infer_planets_for_star(main_id, spectral_class, luminosity, star_mass=None)
             'semi_major_axis_au': sma,
             'orbital_period_days': period,
             'eccentricity': ecc,
-            'inclination_deg': None,
+            'inclination_deg': round(rng.gauss(0, 3.0), 2),
             'temp_calculated_k': temp_k,
             'temp_measured_k': None,
             'geometric_albedo': None,
@@ -1239,18 +1466,538 @@ def _infer_planets_for_star(main_id, spectral_class, luminosity, star_mass=None)
             'molecules': None,
             'discovered': None,
             'planet_type': ptype,
+            'sub_type_flags': sub_flags,
+            'tidally_locked': tidally_locked,
+            'spin_orbit_resonance': spin_orbit,
+            'rotation_period_days': rotation_period_days,
+            'temp_distribution': temp_distribution,
+            'mineral_abundance': mineral_abundance,
             'confidence': 'inferred',
             'moons': [],
+            'ring_system': None,
         })
 
-    # Sort inferred planets by SMA
+    # Sort by SMA
     inferred.sort(key=lambda p: p['semi_major_axis_au'] or 999)
+
+    # ── Resonance chain detection ──
+    _detect_resonance_chains(inferred, rng)
+
+    # ── Ring system generation ──
+    for p in inferred:
+        p['ring_system'] = _generate_ring_system(p, rng)
+
     return inferred
 
 
-def _infer_belts_for_star(main_id, spectral_class, luminosity):
-    """Generate inferred asteroid/debris belts deterministically."""
-    rng = _random.Random(_deterministic_seed(main_id) + 7919)  # offset seed
+def _compute_temp_distribution(temp_k, tidally_locked, spin_orbit, ptype, mass_e, atm_thick, ecc, rng):
+    """Compute realistic temperature distribution across the planet surface.
+
+    Returns dict with substellar, antistellar, terminator, polar temps,
+    day/night contrast, heat transport efficiency, and storm systems.
+
+    Physics:
+    - Tidally locked 1:1: extreme day/night contrast (modulated by atm thickness)
+    - Tidally locked 3:2: pseudo-resonance creates hot longitudes
+    - Free rotators: normal equator-to-pole gradient
+    - Thick atmospheres redistribute heat (Venus-like)
+    - Gas giants: internal heat dominates
+    """
+    is_gas = ptype in ('gas-giant', 'super-jupiter', 'hot-jupiter',
+                       'neptune-like', 'warm-neptune', 'mini-neptune', 'sub-neptune')
+
+    # Atmospheric heat redistribution factor (0 = no redistribution, 1 = uniform)
+    if is_gas:
+        atm_factor = 0.80 + rng.uniform(0, 0.15)  # gas giants redistribute well
+    elif atm_thick > 0.8:
+        atm_factor = 0.70 + atm_thick * 0.1  # Venus-like thick atmosphere
+    elif atm_thick > 0.3:
+        atm_factor = 0.25 + atm_thick * 0.3
+    else:
+        atm_factor = max(0.02, atm_thick * 0.12)  # airless = almost no redistribution
+
+    if tidally_locked and spin_orbit == '1:1':
+        # Synchronous rotation — permanent day/night
+        substellar_t = round(temp_k * (1.3 - atm_factor * 0.35), 1)
+        antistellar_t = round(temp_k * (0.15 + atm_factor * 0.65), 1)
+        terminator_t = round((substellar_t + antistellar_t) * 0.47, 1)
+        polar_t = round(antistellar_t * 0.85 + terminator_t * 0.15, 1)
+        # Central storm (substellar convection cell)
+        storm = {
+            'type': 'substellar_vortex',
+            'latitude_deg': 0,
+            'longitude_deg': 0,  # substellar point
+            'diameter_deg': round(25 + mass_e * 8 + atm_factor * 20, 1),
+            'intensity': round(min(1.0, 0.4 + atm_factor * 0.5 + mass_e * 0.05), 3),
+            'wind_speed_ms': round(50 + atm_factor * 200 + (substellar_t - antistellar_t) * 0.3, 1),
+        }
+        return {
+            'substellar_k': substellar_t,
+            'antistellar_k': antistellar_t,
+            'terminator_k': terminator_t,
+            'polar_k': polar_t,
+            'day_night_contrast': round(substellar_t - antistellar_t, 1),
+            'heat_redistribution': round(atm_factor, 3),
+            'pattern': 'eyeball',
+            'storms': [storm],
+        }
+
+    elif tidally_locked and spin_orbit == '3:2':
+        # Mercury-like: two hot longitudes, eccentric orbit heating
+        hot_long_t = round(temp_k * (1.15 - atm_factor * 0.2), 1)
+        cold_long_t = round(temp_k * (0.55 + atm_factor * 0.25), 1)
+        mean_t = round((hot_long_t + cold_long_t) / 2, 1)
+        return {
+            'hot_longitude_k': hot_long_t,
+            'cold_longitude_k': cold_long_t,
+            'mean_k': mean_t,
+            'day_night_contrast': round(hot_long_t - cold_long_t, 1),
+            'heat_redistribution': round(atm_factor, 3),
+            'pattern': 'mercury_resonance',
+            'storms': [],
+        }
+
+    else:
+        # Free rotator — equator to pole gradient
+        equator_t = round(temp_k * 1.05, 1)
+        polar_t = round(temp_k * (0.55 + atm_factor * 0.30), 1)
+
+        storms = []
+        if is_gas:
+            # Gas giants: internal heat + Coriolis → banded storms
+            internal_heat = 15 + mass_e * 0.5  # K from internal heat
+            equator_t = round(equator_t + internal_heat, 1)
+            n_storms = rng.randint(1, 4)
+            for si in range(n_storms):
+                lat = rng.uniform(-60, 60)
+                storms.append({
+                    'type': 'anticyclonic_vortex' if rng.random() > 0.3 else 'cyclonic_band',
+                    'latitude_deg': round(lat, 1),
+                    'longitude_deg': round(rng.uniform(0, 360), 1),
+                    'diameter_deg': round(rng.uniform(8, 35), 1),
+                    'intensity': round(rng.uniform(0.3, 1.0), 3),
+                    'wind_speed_ms': round(rng.uniform(100, 600), 1),
+                })
+        elif atm_thick > 0.3 and temp_k > 200:
+            # Rocky/ocean with atmosphere may have cyclones
+            if rng.random() < 0.4:
+                storms.append({
+                    'type': 'tropical_cyclone',
+                    'latitude_deg': round(rng.uniform(-30, 30), 1),
+                    'longitude_deg': round(rng.uniform(0, 360), 1),
+                    'diameter_deg': round(rng.uniform(3, 12), 1),
+                    'intensity': round(rng.uniform(0.2, 0.7), 3),
+                    'wind_speed_ms': round(rng.uniform(30, 180), 1),
+                })
+
+        return {
+            'equator_k': equator_t,
+            'polar_k': polar_t,
+            'day_night_contrast': round(equator_t * (0.12 - atm_factor * 0.08), 1),
+            'heat_redistribution': round(atm_factor, 3),
+            'pattern': 'banded' if is_gas else 'latitudinal',
+            'storms': storms,
+        }
+
+
+def _compute_mineral_abundance(ptype, mass_e, rad_e, temp_k, sma, metallicity, rng):
+    """Compute element/mineral abundance for a planet.
+
+    Modeled after real planetary geochemistry:
+    - KREEP (K, REE, P) — enriched in late-stage igneous differentiation
+    - Siderophiles (Fe, Ni, Co, PGMs) — concentrated in cores
+    - Lithophiles (Si, Al, Ca, Na, K) — in crusts/mantles
+    - Chalcophiles (Cu, Zn, S) — in sulfide ores
+    - Volatiles (H₂O, CO₂, NH₃, CH₄) — distance-dependent
+    - Atmophiles (N, noble gases) — mass-dependent retention
+
+    Returns dict with element abundances (mass fraction), KREEP index,
+    and notable deposits.
+    """
+    is_gas = ptype in ('gas-giant', 'super-jupiter', 'hot-jupiter',
+                       'neptune-like', 'warm-neptune', 'mini-neptune', 'sub-neptune')
+    met = metallicity if metallicity else 0.0
+    met_factor = 10 ** met  # solar = 1.0, high met = enriched
+
+    if is_gas:
+        # Gas giants: H/He dominated, some metals in core
+        return {
+            'class': 'gas_envelope',
+            'hydrogen_pct': round(73 + rng.uniform(0, 12), 1),
+            'helium_pct': round(24 + rng.uniform(-3, 4), 1),
+            'metals_pct': round(rng.uniform(0.5, 3.0) * met_factor, 2),
+            'water_ice_pct': round(rng.uniform(0.01, 0.5) * (1 if sma > 2 else 0.1), 3),
+            'ammonia_pct': round(rng.uniform(0.001, 0.1), 4),
+            'methane_pct': round(rng.uniform(0.01, 0.3), 4),
+            'core_metals': {
+                'iron_pct': round(rng.uniform(5, 25) * met_factor, 1),
+                'silicate_pct': round(rng.uniform(20, 50), 1),
+                'water_pct': round(rng.uniform(10, 40), 1),
+            },
+            'kreep_index': 0,
+            'mining_viability': 'none',
+            'notable': ['atmospheric_helium3'] if rng.random() < 0.3 else [],
+        }
+    elif ptype in ('neptune-like', 'warm-neptune', 'mini-neptune', 'sub-neptune'):
+        return {
+            'class': 'ice_gas_envelope',
+            'water_ice_pct': round(rng.uniform(30, 60), 1),
+            'hydrogen_pct': round(rng.uniform(10, 25), 1),
+            'helium_pct': round(rng.uniform(5, 15), 1),
+            'ammonia_pct': round(rng.uniform(2, 10), 1),
+            'methane_pct': round(rng.uniform(1, 8), 1),
+            'rock_pct': round(rng.uniform(15, 30) * met_factor, 1),
+            'kreep_index': 0,
+            'mining_viability': 'low',
+            'notable': [],
+        }
+
+    # ── Solid worlds ──
+    density = mass_e / max(rad_e ** 3, 0.001)  # relative to Earth
+
+    # Iron/nickel core fraction (siderophile concentration)
+    if ptype == 'iron-planet':
+        iron_pct = round(60 + rng.uniform(0, 20), 1)
+        nickel_pct = round(5 + rng.uniform(0, 8), 1)
+    elif ptype in ('rocky', 'earth-like', 'super-earth'):
+        iron_pct = round(28 + density * 5 + rng.uniform(-5, 8) * met_factor, 1)
+        nickel_pct = round(1.5 + rng.uniform(0, 2) * met_factor, 1)
+    elif ptype == 'carbon-planet':
+        iron_pct = round(15 + rng.uniform(0, 10), 1)
+        nickel_pct = round(1 + rng.uniform(0, 2), 1)
+    else:
+        iron_pct = round(20 + rng.uniform(-8, 15) * met_factor, 1)
+        nickel_pct = round(1 + rng.uniform(0, 3), 1)
+
+    # Silicates (mantle)
+    silicate_pct = round(max(5, 100 - iron_pct - nickel_pct - rng.uniform(5, 20)), 1)
+
+    # KREEP — enriched in differentiated bodies (like lunar mare basalts)
+    # Higher in geologically active or recently differentiated worlds
+    kreep_base = 0.05 if mass_e < 0.01 else 0.15 if mass_e < 0.1 else 0.35
+    if temp_k > 500:
+        kreep_base *= 1.3  # thermal processing concentrates incompatibles
+    kreep_index = round(min(1.0, kreep_base * met_factor * rng.uniform(0.6, 1.5)), 3)
+
+    # Volatiles — distance from star
+    frost_line = 2.7  # AU, rough water ice line
+    if sma > frost_line:
+        water_ice_pct = round(rng.uniform(10, 45) * min(sma / frost_line, 3), 1)
+        co2_ice_pct = round(rng.uniform(1, 8), 1)
+        nh3_pct = round(rng.uniform(0.1, 3), 2)
+    elif sma > frost_line * 0.5:
+        water_ice_pct = round(rng.uniform(0.5, 8), 2)
+        co2_ice_pct = round(rng.uniform(0.1, 2), 2)
+        nh3_pct = round(rng.uniform(0.01, 0.3), 3)
+    else:
+        water_ice_pct = round(rng.uniform(0.001, 0.5), 3)
+        co2_ice_pct = round(rng.uniform(0, 0.3), 3)
+        nh3_pct = 0.0
+
+    # Special compositions
+    if ptype == 'ocean-world' or ptype == 'hycean':
+        water_ice_pct = round(max(water_ice_pct, 40 + rng.uniform(0, 30)), 1)
+
+    if ptype == 'ice-dwarf':
+        water_ice_pct = round(max(water_ice_pct, 50 + rng.uniform(0, 30)), 1)
+        silicate_pct = round(max(5, silicate_pct * 0.3), 1)
+
+    # Trace metals & strategic minerals
+    copper_ppm = round(rng.uniform(20, 120) * met_factor, 1)
+    titanium_ppm = round(rng.uniform(3000, 8000) * met_factor, 0)
+    aluminum_pct = round(rng.uniform(6, 10) * met_factor, 2)
+    uranium_ppb = round(rng.uniform(10, 80) * met_factor * kreep_index, 1)
+    thorium_ppb = round(rng.uniform(30, 200) * met_factor * kreep_index, 1)
+    rare_earth_ppm = round(rng.uniform(50, 300) * met_factor * kreep_index, 1)
+    platinum_group_ppb = round(rng.uniform(1, 20) * met_factor * density, 1)
+
+    # Carbon planet specials
+    if ptype == 'carbon-planet':
+        carbon_pct = round(30 + rng.uniform(0, 25), 1)
+        silicate_pct = round(max(5, silicate_pct - carbon_pct), 1)
+    else:
+        carbon_pct = round(rng.uniform(0.01, 0.5), 3)
+
+    # Mining viability assessment
+    if is_gas:
+        viability = 'none'
+    elif ptype in ('lava-world',) and temp_k > 1500:
+        viability = 'extreme_hazard'
+    elif ptype == 'iron-planet':
+        viability = 'excellent_metals'
+    elif ptype == 'carbon-planet':
+        viability = 'excellent_carbon'
+    elif kreep_index > 0.5 and iron_pct > 25:
+        viability = 'high'
+    elif water_ice_pct > 20:
+        viability = 'strategic_water'
+    elif rare_earth_ppm > 200:
+        viability = 'strategic_rare_earth'
+    else:
+        viability = 'moderate' if iron_pct > 20 else 'low'
+
+    notable = []
+    if platinum_group_ppb > 10:
+        notable.append('pgm_deposits')
+    if rare_earth_ppm > 200:
+        notable.append('rare_earth_enriched')
+    if uranium_ppb > 50:
+        notable.append('fissile_deposits')
+    if water_ice_pct > 30:
+        notable.append('water_rich')
+    if ptype == 'carbon-planet':
+        notable.append('diamond_mantle')
+    if kreep_index > 0.6:
+        notable.append('kreep_terrane')
+
+    return {
+        'class': 'solid_differentiated' if density > 0.7 else 'solid_primitive',
+        'iron_pct': min(iron_pct, 80),
+        'nickel_pct': min(nickel_pct, 15),
+        'silicate_pct': min(silicate_pct, 70),
+        'aluminum_pct': aluminum_pct,
+        'carbon_pct': carbon_pct,
+        'water_ice_pct': min(water_ice_pct, 80),
+        'co2_ice_pct': co2_ice_pct,
+        'ammonia_pct': nh3_pct,
+        'copper_ppm': copper_ppm,
+        'titanium_ppm': titanium_ppm,
+        'uranium_ppb': uranium_ppb,
+        'thorium_ppb': thorium_ppb,
+        'rare_earth_ppm': rare_earth_ppm,
+        'platinum_group_ppb': platinum_group_ppb,
+        'kreep_index': kreep_index,
+        'mining_viability': viability,
+        'notable': notable,
+    }
+
+
+def _enrich_planet_physics(planet, star_spec_class, star_luminosity, rng=None):
+    """Enrich any planet dict with tidal lock, temp distribution, and mineral abundance
+    data. Works for both observed and inferred planets."""
+    import random as _rmod
+    if rng is None:
+        rng = _rmod.Random(hash(planet.get('planet_name', '')) & 0xFFFFFFFF)
+
+    sma = planet.get('semi_major_axis_au') or 1.0
+    ecc = planet.get('eccentricity') or 0.0
+    mass_e = planet.get('mass_earth')
+    temp_k = planet.get('temp_calculated_k') or 288
+    p_type = planet.get('planet_type', 'rocky')
+    period_days = planet.get('orbital_period_days')
+    luminosity = star_luminosity if star_luminosity else 1.0
+
+    # ── Tidal lock determination ──
+    if 'tidally_locked' not in planet or planet.get('tidally_locked') is None:
+        spc = (star_spec_class or 'G')[0].upper()
+        # Tidal lock radius depends primarily on stellar mass (which correlates
+        # with spectral class) and system age. M-dwarfs lock planets out to
+        # ~0.3-0.5 AU over Gyr timescales.
+        tidal_lock_radius = 0.0
+        if spc == 'M':
+            tidal_lock_radius = 0.40  # Most M-dwarf close-in planets are locked
+        elif spc == 'K':
+            tidal_lock_radius = 0.15
+        elif spc == 'G':
+            tidal_lock_radius = 0.06
+        elif spc == 'F':
+            tidal_lock_radius = 0.03
+        planet['tidally_locked'] = bool(sma < tidal_lock_radius)
+
+    # ── Spin-orbit resonance ──
+    if 'spin_orbit_resonance' not in planet or planet.get('spin_orbit_resonance') is None:
+        if planet['tidally_locked']:
+            if ecc > 0.1 and rng.random() < 0.35:
+                planet['spin_orbit_resonance'] = '3:2'
+            else:
+                planet['spin_orbit_resonance'] = '1:1'
+        else:
+            planet['spin_orbit_resonance'] = None
+
+    # ── Rotation period ──
+    if 'rotation_period_days' not in planet or planet.get('rotation_period_days') is None:
+        if planet['tidally_locked'] and period_days:
+            ratio = planet['spin_orbit_resonance']
+            if ratio == '3:2':
+                planet['rotation_period_days'] = round(period_days * (2.0 / 3.0), 3)
+            else:
+                planet['rotation_period_days'] = round(period_days, 3)
+        else:
+            # Estimate free rotation from type
+            GAS = {'gas-giant', 'hot-jupiter', 'warm-neptune', 'cold-giant', 'super-jupiter'}
+            ICE = {'ice-giant', 'mini-neptune'}
+            if p_type in GAS:
+                planet['rotation_period_days'] = round(rng.uniform(0.33, 0.58), 3)
+            elif p_type in ICE:
+                planet['rotation_period_days'] = round(rng.uniform(0.5, 0.75), 3)
+            elif mass_e and mass_e > 5:
+                planet['rotation_period_days'] = round(rng.uniform(0.6, 1.8), 3)
+            else:
+                planet['rotation_period_days'] = round(rng.uniform(0.8, 2.5), 3)
+
+    # ── Temperature distribution ──
+    if 'temp_distribution' not in planet or not planet.get('temp_distribution'):
+        # Estimate atmosphere thickness for heat redistribution
+        GAS = {'gas-giant', 'hot-jupiter', 'warm-neptune', 'cold-giant', 'super-jupiter'}
+        ICE = {'ice-giant', 'mini-neptune'}
+        THICK = {'earth-like', 'super-earth', 'ocean-world', 'hycean'}
+        if p_type in GAS:
+            atm_est = 0.8
+        elif p_type in ICE:
+            atm_est = 0.7
+        elif p_type in THICK:
+            atm_est = 0.55
+        elif p_type in {'rocky', 'lava-world'}:
+            atm_est = 0.15
+        else:
+            atm_est = 0.05
+        planet['temp_distribution'] = _compute_temp_distribution(
+            temp_k, planet['tidally_locked'], planet['spin_orbit_resonance'],
+            p_type, mass_e or 1.0, atm_est, ecc, rng
+        )
+
+    # ── Mineral abundance ──
+    if 'mineral_abundance' not in planet or not planet.get('mineral_abundance'):
+        radius_e = planet.get('radius_earth') or 1.0
+        planet['mineral_abundance'] = _compute_mineral_abundance(
+            p_type, mass_e or 1.0, radius_e, temp_k, sma or 1.0, 0.0, rng
+        )
+
+
+def _detect_resonance_chains(planets, rng):
+    """Detect and optionally snap near-resonant adjacent planet pairs.
+
+    Checks period ratios for 2:1, 3:2, 4:3, 5:3, 5:2 resonances.
+    If a pair is close to resonance, snap them with 30% probability.
+    """
+    resonance_ratios = [
+        (2.0, 1.0, '2:1'), (3.0, 2.0, '3:2'), (4.0, 3.0, '4:3'),
+        (5.0, 3.0, '5:3'), (5.0, 2.0, '5:2'),
+    ]
+    for i in range(len(planets) - 1):
+        p_inner = planets[i]
+        p_outer = planets[i + 1]
+        per_i = p_inner.get('orbital_period_days') or 1
+        per_o = p_outer.get('orbital_period_days') or 1
+        if per_i <= 0:
+            continue
+        ratio = per_o / per_i
+
+        for p, q, label in resonance_ratios:
+            ideal = p / q
+            if abs(ratio - ideal) / ideal < 0.08:  # within 8%
+                # Mark resonance
+                p_inner.setdefault('resonances', []).append({
+                    'partner': p_outer['planet_name'],
+                    'ratio': label,
+                    'role': 'inner',
+                })
+                p_outer.setdefault('resonances', []).append({
+                    'partner': p_inner['planet_name'],
+                    'ratio': label,
+                    'role': 'outer',
+                })
+                # Snap to exact resonance 30% of the time
+                if rng.random() < 0.30:
+                    p_outer['orbital_period_days'] = round(per_i * ideal, 2)
+                    # Recompute SMA from snapped period: a = (P^2 * M)^(1/3)
+                    new_per_yr = p_outer['orbital_period_days'] / 365.25
+                    p_outer['semi_major_axis_au'] = round(new_per_yr ** (2.0/3.0), 4)
+                    p_outer.setdefault('sub_type_flags', []).append('resonance_locked')
+                # Enhanced tidal heating on inner body
+                p_inner.setdefault('sub_type_flags', []).append('resonance_tidal_heating')
+                break
+
+
+def _generate_ring_system(planet_rec, rng):
+    """Generate a ring system for a planet based on its type and orbit."""
+    ptype = planet_rec.get('planet_type', '')
+    mass = planet_rec.get('mass_earth', 0)
+    sma = planet_rec.get('semi_major_axis_au', 1.0)
+    rad_e = planet_rec.get('radius_earth', 1.0)
+
+    # Determine ring probability
+    if ptype in ('gas-giant', 'super-jupiter'):
+        prob = 0.80 if sma > 1.0 else 0.10
+    elif ptype in ('neptune-like', 'warm-neptune', 'mini-neptune'):
+        prob = 0.60
+    elif ptype == 'super-earth' and mass > 3.0:
+        prob = 0.05
+    elif ptype in ('rocky', 'earth-like'):
+        prob = 0.02
+    else:
+        prob = 0.0
+
+    if rng.random() > prob:
+        return None
+
+    # Ring extent: 1.2–3.0 Roche limits from planet center
+    roche_limit_re = 2.46 * rad_e  # Roche limit in Earth radii (rough)
+    inner_re = round(roche_limit_re * rng.uniform(0.5, 0.8), 2)
+    outer_re = round(roche_limit_re * rng.uniform(1.5, 3.0), 2)
+
+    # Number of major ring bands
+    n_rings = rng.randint(2, 5) if ptype in ('gas-giant', 'super-jupiter') else rng.randint(1, 3)
+
+    rings = []
+    gap_positions = []
+    ring_extent = outer_re - inner_re
+    step = ring_extent / (n_rings + 1)
+
+    for r in range(n_rings):
+        r_inner = round(inner_re + r * step, 2)
+        r_outer = round(inner_re + (r + 1) * step, 2)
+        # Composition: inner rings rocky, outer rings icy
+        frac = (r_inner - inner_re) / max(ring_extent, 0.01)
+        comp = 'rocky' if frac < 0.4 else 'icy' if frac > 0.7 else 'mixed'
+        rings.append({
+            'name': chr(ord('A') + r),
+            'inner_radius_re': r_inner,
+            'outer_radius_re': r_outer,
+            'composition': comp,
+            'optical_depth': round(rng.uniform(0.1, 2.0), 2),
+        })
+        if r < n_rings - 1:
+            gap_positions.append({
+                'name': f"Gap {r+1}",
+                'position_re': round(r_outer + step * 0.1, 2),
+                'width_re': round(step * rng.uniform(0.05, 0.2), 3),
+            })
+
+    # Shepherd moons: 1-3 tiny moons embedded in ring gaps
+    shepherds = []
+    n_shep = rng.randint(1, min(3, len(gap_positions) + 1))
+    for s in range(n_shep):
+        s_pos = rng.uniform(inner_re, outer_re)
+        shepherds.append({
+            'name': f"Shepherd-{s+1}",
+            'orbital_radius_re': round(s_pos, 2),
+            'diameter_km': round(rng.uniform(5, 80), 1),
+        })
+
+    return {
+        'inner_radius_re': inner_re,
+        'outer_radius_re': outer_re,
+        'ring_count': n_rings,
+        'rings': rings,
+        'gaps': gap_positions,
+        'shepherd_moons': shepherds,
+        'total_mass_fraction': round(rng.uniform(1e-8, 1e-4), 10),
+    }
+
+
+# ── Belt generation with resonance gaps, families, Trojans ─────────
+
+def _infer_belts_for_star(main_id, spectral_class, luminosity, planets=None):
+    """Generate asteroid/debris belts with resonance structure.
+
+    Improvements over v1:
+      - Kirkwood-style resonance gaps computed from nearest gas giant
+      - Asteroid family clusters (collisional families)
+      - Trojan swarms at L4/L5 of gas giants
+      - Ice dwarf population in scattered disc
+    """
+    rng = _random.Random(_deterministic_seed(main_id) + 7919)
     prior = _INF_STELLAR_PRIORS.get(spectral_class, _INF_STELLAR_PRIORS['G'])
 
     if rng.random() > prior['belt_prob']:
@@ -1258,50 +2005,175 @@ def _infer_belts_for_star(main_id, spectral_class, luminosity):
 
     lum_scale = math.sqrt(max(luminosity, 0.0001))
     belts = []
+    planets = planets or []
 
-    # Inner rocky-asteroid belt (like our asteroid belt at 2.2-3.3 AU)
-    if rng.random() > 0.3:
+    # Find gas giants for resonance gap calculation
+    giants = [p for p in planets
+              if p.get('planet_type') in ('gas-giant', 'super-jupiter', 'hot-jupiter')]
+    giant_sma = [g.get('semi_major_axis_au') or g.get('pl_orbsmax') or 5.0 for g in giants]
+
+    # ── Inner rocky-asteroid belt (2.2-3.2 AU analog) ──
+    if rng.random() < 0.90:
         inner = round(1.5 * lum_scale, 2)
         outer = round(3.2 * lum_scale, 2)
+        gaps = _compute_resonance_gaps(inner, outer, giant_sma, rng)
+        families = _generate_families(main_id, 'inner', inner, outer, rng)
         belts.append({
             'belt_id': f"{main_id}_belt_inner",
             'belt_type': 'rocky-asteroid',
             'inner_radius_au': inner,
             'outer_radius_au': outer,
-            'estimated_bodies': rng.randint(5000, 50000),
+            'estimated_bodies': rng.randint(50000, 500000),
             'confidence': 'inferred',
-            'major_asteroids': _generate_asteroids(main_id, 'inner', inner, outer, rng),
+            'resonance_gaps': gaps,
+            'families': families,
+            'major_asteroids': _generate_asteroids(main_id, 'inner', inner, outer, rng, gaps),
         })
 
-    # Outer icy belt (Kuiper-belt analog)
-    if rng.random() > 0.25:
+    # ── Outer icy belt (Kuiper-belt analog) ──
+    if rng.random() < 0.90:
         inner = round(20.0 * lum_scale, 2)
         outer = round(50.0 * lum_scale, 2)
+        gaps = _compute_resonance_gaps(inner, outer, giant_sma, rng)
+        families = _generate_families(main_id, 'kuiper', inner, outer, rng, icy=True)
         belts.append({
             'belt_id': f"{main_id}_belt_outer",
             'belt_type': 'icy-kuiper',
             'inner_radius_au': inner,
             'outer_radius_au': outer,
-            'estimated_bodies': rng.randint(20000, 200000),
+            'estimated_bodies': rng.randint(100000, 1000000),
             'confidence': 'inferred',
-            'major_asteroids': _generate_asteroids(main_id, 'outer', inner, outer, rng),
+            'resonance_gaps': gaps,
+            'families': families,
+            'major_asteroids': _generate_asteroids(main_id, 'outer', inner, outer, rng, gaps),
+            'ice_dwarfs': _generate_ice_dwarfs(main_id, inner, outer, rng),
         })
+
+    # ── Hilda/Hungaria analog belt ──
+    if rng.random() < 0.50:
+        inner2 = round(0.8 * lum_scale, 2)
+        outer2 = round(1.4 * lum_scale, 2)
+        belts.append({
+            'belt_id': f"{main_id}_belt_hilda",
+            'belt_type': 'rocky-asteroid',
+            'inner_radius_au': inner2,
+            'outer_radius_au': outer2,
+            'estimated_bodies': rng.randint(10000, 100000),
+            'confidence': 'inferred',
+            'resonance_gaps': [],
+            'families': [],
+            'major_asteroids': _generate_asteroids(main_id, 'hilda', inner2, outer2, rng),
+        })
+
+    # ── Scattered disc (beyond Kuiper) ──
+    if rng.random() < 0.40:
+        inner3 = round(50.0 * lum_scale, 2)
+        outer3 = round(150.0 * lum_scale, 2)
+        belts.append({
+            'belt_id': f"{main_id}_belt_scattered",
+            'belt_type': 'scattered-disc',
+            'inner_radius_au': inner3,
+            'outer_radius_au': outer3,
+            'estimated_bodies': rng.randint(50000, 500000),
+            'confidence': 'inferred',
+            'resonance_gaps': [],
+            'families': [],
+            'major_asteroids': _generate_asteroids(main_id, 'scattered', inner3, outer3, rng),
+            'ice_dwarfs': _generate_ice_dwarfs(main_id, inner3, outer3, rng, count_range=(1, 4)),
+        })
+
+    # ── Trojan swarms for gas giants ──
+    trojans = _generate_trojans(main_id, planets, rng)
+    if trojans:
+        belts.extend(trojans)
 
     return belts
 
 
-def _generate_asteroids(main_id, belt_tag, inner_au, outer_au, rng):
-    """Generate a handful of major asteroid bodies within a belt."""
-    n = rng.randint(4, 12)
-    classes = ['C', 'S', 'M', 'C', 'C', 'S']  # C-type most common
+def _compute_resonance_gaps(belt_inner, belt_outer, giant_sma_list, rng):
+    """Compute Kirkwood-style resonance gaps from nearby gas giants.
+
+    For each giant, compute mean-motion resonance positions:
+      a_res = a_giant × (p/q)^(2/3)
+    If the position falls within the belt, create a gap.
+    """
+    resonances = [
+        (4, 1, 'narrow'), (3, 1, 'wide'), (5, 2, 'moderate'),
+        (7, 3, 'narrow'), (2, 1, 'wide'), (5, 3, 'narrow'),
+    ]
+    gaps = []
+
+    for a_giant in giant_sma_list:
+        if a_giant is None or a_giant <= 0:
+            continue
+        for p, q, width_class in resonances:
+            a_res = a_giant * (q / p) ** (2.0 / 3.0)
+            if belt_inner < a_res < belt_outer:
+                width_map = {'narrow': 0.02, 'moderate': 0.05, 'wide': 0.08}
+                base_width = width_map.get(width_class, 0.03)
+                gaps.append({
+                    'resonance': f"{p}:{q}",
+                    'position_au': round(a_res, 3),
+                    'width_au': round(base_width * (belt_outer - belt_inner), 3),
+                    'width_class': width_class,
+                    'shaping_planet_sma': round(a_giant, 3),
+                })
+
+    return gaps
+
+
+def _generate_families(main_id, belt_tag, inner_au, outer_au, rng, icy=False):
+    """Generate collisional asteroid family clusters within a belt."""
+    n_families = rng.randint(1, 4)
+    family_types = (
+        [('carbonaceous', 'C'), ('basaltic', 'V'), ('metallic', 'M'), ('icy', 'D')]
+        if icy else
+        [('carbonaceous', 'C'), ('basaltic', 'V'), ('metallic', 'M'), ('siliceous', 'S')]
+    )
+    families = []
+    for f in range(n_families):
+        ftype, spec = rng.choice(family_types)
+        center = round(rng.uniform(inner_au, outer_au), 3)
+        spread = round(rng.uniform(0.03, 0.08), 3)
+        parent_diam = round(rng.uniform(100, 600), 1)
+        member_count = rng.randint(80, 500)
+        families.append({
+            'name': f"{main_id}-{belt_tag[0].upper()}F{f+1}",
+            'family_type': ftype,
+            'spectral_class': spec,
+            'center_au': center,
+            'spread_au': spread,
+            'parent_diameter_km': parent_diam,
+            'member_count': member_count,
+        })
+    return families
+
+
+def _generate_asteroids(main_id, belt_tag, inner_au, outer_au, rng, gaps=None):
+    """Generate major asteroid bodies, avoiding resonance gaps."""
+    n = rng.randint(8, 25)
+    classes = ['C', 'S', 'M', 'C', 'C', 'S', 'C', 'B', 'D']
     asteroids = []
+    gap_zones = [(g['position_au'] - g['width_au']/2, g['position_au'] + g['width_au']/2)
+                 for g in (gaps or [])]
+
     for j in range(n):
-        sma = round(rng.uniform(inner_au, outer_au), 3)
+        # Pick SMA, retry if in a gap
+        for _attempt in range(5):
+            sma = round(rng.uniform(inner_au, outer_au), 3)
+            in_gap = any(lo <= sma <= hi for lo, hi in gap_zones)
+            if not in_gap:
+                break
+
         diameter_km = round(rng.uniform(50, 500) if j < 3 else rng.uniform(10, 150), 1)
+        ecc = round(rng.uniform(0.01, 0.3), 3)
+        inc = round(rng.gauss(0, 8.0), 2)
         asteroids.append({
             'name': f"{main_id} {belt_tag[0].upper()}{j+1:02d}",
             'semi_major_axis_au': sma,
             'diameter_km': diameter_km,
+            'eccentricity': ecc,
+            'inclination_deg': inc,
             'spectral_class': rng.choice(classes),
             'confidence': 'inferred',
         })
@@ -1309,43 +2181,194 @@ def _generate_asteroids(main_id, belt_tag, inner_au, outer_au, rng):
     return asteroids
 
 
-def _infer_moons_for_planet(planet_rec, star_name, rng):
-    """Add inferred moons to a planet record (mutates in-place).
+def _generate_ice_dwarfs(main_id, inner_au, outer_au, rng, count_range=(3, 8)):
+    """Generate Pluto-class ice dwarf objects within a belt/disc region."""
+    n = rng.randint(*count_range)
+    dwarfs = []
+    for i in range(n):
+        mass = round(rng.uniform(0.001, 0.05), 4)
+        radius = round(mass ** 0.27, 3) if mass > 0 else 0.1
+        sma = round(rng.uniform(inner_au, outer_au), 2)
+        ecc = round(rng.uniform(0.05, 0.45), 3)
+        inc = round(abs(rng.gauss(0, 15.0)), 2)
+        # Surface composition: N2 ice, methane frost, tholins
+        surfaces = ['nitrogen-ice', 'methane-frost', 'tholin-dark', 'water-ice', 'co-ice']
+        dwarfs.append({
+            'name': f"{main_id} KBO-{i+1}",
+            'planet_type': 'ice-dwarf',
+            'mass_earth': mass,
+            'radius_earth': radius,
+            'semi_major_axis_au': sma,
+            'eccentricity': ecc,
+            'inclination_deg': inc,
+            'surface_type': rng.choice(surfaces),
+            'diameter_km': round(radius * 12742, 0),  # Re = 6371 km
+            'has_companion': rng.random() < 0.15,  # binary ice dwarfs like Pluto-Charon
+            'confidence': 'inferred',
+        })
+    dwarfs.sort(key=lambda d: d['mass_earth'], reverse=True)
+    return dwarfs
 
-    Heuristics:
-      - Gas giants:  2-12 major moons
-      - Neptune-like: 1-6 moons
-      - Super-earths: 0-2 moons
-      - Rocky/terrestrial: 0-1 moon (boost if in HZ)
-      - Sub-earths: 0 moons
+
+def _generate_trojans(main_id, planets, rng):
+    """Generate Trojan swarms at L4/L5 for gas giants."""
+    trojans = []
+    for p in planets:
+        ptype = p.get('planet_type', '')
+        sma = p.get('semi_major_axis_au') or p.get('pl_orbsmax') or 0
+        if ptype not in ('gas-giant', 'super-jupiter') or not sma or sma < 1.0:
+            continue
+        if rng.random() > 0.70:  # 70% of gas giants have Trojans
+            continue
+
+        pname = p.get('planet_name') or p.get('pl_name') or 'unknown'
+        n_bodies = rng.randint(200, 5000)
+        for lagrange in ['L4', 'L5']:
+            base_angle = 60.0 if lagrange == 'L4' else -60.0
+            trojans.append({
+                'belt_id': f"{main_id}_{pname.split()[-1]}_{lagrange}",
+                'belt_type': 'trojan-swarm',
+                'lagrange_point': lagrange,
+                'parent_planet': pname,
+                'parent_sma_au': sma,
+                'angular_offset_deg': base_angle,
+                'angular_spread_deg': round(rng.uniform(10, 20), 1),
+                'inclination_spread_deg': round(rng.uniform(10, 25), 1),
+                'estimated_bodies': n_bodies,
+                'inner_radius_au': round(sma * 0.92, 2),
+                'outer_radius_au': round(sma * 1.08, 2),
+                'confidence': 'inferred',
+                'major_asteroids': [],
+            })
+    return trojans
+
+
+# ── Moon generation with 8-type taxonomy ──────────────────────────
+
+_MOON_TYPE_RULES = {
+    # (moon_type, conditions_func, probability_boost)
+    'volcanic':         lambda k, n, ptype, sma, mass: k == 0 and ptype in ('gas-giant', 'super-jupiter'),
+    'ice-shell':        lambda k, n, ptype, sma, mass: k in (1, 2) and ptype in ('gas-giant', 'super-jupiter', 'neptune-like'),
+    'atmosphere-moon':  lambda k, n, ptype, sma, mass: mass > 0.01 and sma > 3.0,
+    'ocean-moon':       lambda k, n, ptype, sma, mass: k in (1, 2, 3) and sma > 2.0,
+    'cratered-airless': lambda k, n, ptype, sma, mass: True,  # default fallback
+    'captured-irregular': lambda k, n, ptype, sma, mass: k >= n - 2 and n > 3,
+    'shepherd':         lambda k, n, ptype, sma, mass: mass < 0.0001,
+    'binary-moon':      lambda k, n, ptype, sma, mass: False,  # rare, handled specially
+}
+
+
+def _classify_moon_type(k, n_total, parent_type, parent_sma, moon_mass, rng):
+    """Assign a moon type based on orbital position and parent planet."""
+    # Innermost moon of gas giant: volcanic (Io analog)
+    if k == 0 and parent_type in ('gas-giant', 'super-jupiter') and rng.random() < 0.65:
+        return 'volcanic'
+
+    # Second/third moon of gas giant: ice-shell (Europa/Enceladus analog)
+    if k in (1, 2) and parent_type in ('gas-giant', 'super-jupiter') and rng.random() < 0.55:
+        return 'ice-shell'
+
+    # Large moon far from star: atmosphere (Titan analog)
+    if moon_mass > 0.01 and parent_sma > 4.0 and rng.random() < 0.20:
+        return 'atmosphere-moon'
+
+    # Mid-orbit moons: ocean moon (subsurface)
+    if k in (1, 2, 3) and parent_sma > 2.0 and parent_type in ('gas-giant', 'super-jupiter', 'neptune-like'):
+        if rng.random() < 0.30:
+            return 'ocean-moon'
+
+    # Outer irregular moons: captured
+    if k >= n_total - 2 and n_total > 4 and rng.random() < 0.40:
+        return 'captured-irregular'
+
+    # Very tiny moons: shepherd type
+    if moon_mass < 0.0001 and rng.random() < 0.30:
+        return 'shepherd'
+
+    # Binary moon: very rare
+    if rng.random() < 0.03:
+        return 'binary-moon'
+
+    # Default
+    return 'cratered-airless'
+
+
+def _infer_moons_for_planet(planet_rec, star_name, rng):
+    """Generate moons with 8-type classification and tidal heating.
+
+    Moon types: volcanic, ice-shell, atmosphere-moon, ocean-moon,
+    cratered-airless, captured-irregular, shepherd, binary-moon.
     """
     ptype = planet_rec.get('planet_type', 'unknown')
     mass = planet_rec.get('mass_earth') or 0
-
-    if ptype == 'sub-earth' or mass < 0.05:
-        return
-    elif ptype in ('gas-giant', 'super-jupiter'):
-        n = rng.randint(2, 12)
-    elif ptype == 'neptune-like':
-        n = rng.randint(1, 6)
-    elif ptype == 'super-earth':
-        n = rng.randint(0, 2)
-    elif ptype == 'rocky':
-        n = 1 if rng.random() < 0.4 else 0
-    else:
-        n = 1 if rng.random() < 0.25 else 0
-
     sma_planet = planet_rec.get('semi_major_axis_au') or 1.0
+
+    if ptype in ('sub-earth', 'ice-dwarf') or mass < 0.05:
+        return
+
+    # Moon count by planet type
+    if ptype == 'super-jupiter':
+        n = rng.randint(8, 20)
+    elif ptype in ('gas-giant', 'hot-jupiter'):
+        n = rng.randint(4, 16) if ptype == 'gas-giant' else rng.randint(0, 3)
+    elif ptype in ('neptune-like', 'warm-neptune', 'mini-neptune'):
+        n = rng.randint(2, 8)
+    elif ptype in ('super-earth', 'hycean', 'sub-neptune'):
+        n = rng.randint(0, 3)
+    elif ptype in ('rocky', 'earth-like', 'eyeball-world', 'ocean-world', 'desert-world'):
+        n = rng.randint(0, 2) if rng.random() < 0.6 else 0
+    elif ptype == 'lava-world':
+        n = 0  # too close to star
+    elif ptype in ('iron-planet', 'carbon-planet', 'chthonian'):
+        n = rng.randint(0, 1)
+    else:
+        n = 1 if rng.random() < 0.35 else 0
+
     moons = []
     for k in range(n):
-        # Moon orbital radius in AU (Hill sphere fraction)
         hill_frac = rng.uniform(0.002, 0.02)
         moon_orbit_au = round(sma_planet * hill_frac * (k + 1), 6)
-        # Moon mass: tiny fraction of planet mass
-        moon_mass_frac = rng.uniform(0.0001, 0.02) if ptype in ('gas-giant', 'super-jupiter', 'neptune-like') else rng.uniform(0.001, 0.05)
+
+        # Moon mass
+        if ptype in ('gas-giant', 'super-jupiter', 'neptune-like', 'warm-neptune', 'mini-neptune'):
+            moon_mass_frac = rng.uniform(0.0001, 0.02)
+        else:
+            moon_mass_frac = rng.uniform(0.001, 0.05)
         moon_mass = round(mass * moon_mass_frac, 4)
-        moon_radius = round(moon_mass ** 0.27 if moon_mass > 0 else 0.1, 3)  # rough M-R relation
-        moon_type = 'icy' if sma_planet > 3 else 'rocky'
+        moon_radius = round(moon_mass ** 0.27 if moon_mass > 0 else 0.1, 3)
+
+        # Classify moon type
+        moon_type = _classify_moon_type(k, n, ptype, sma_planet, moon_mass, rng)
+
+        # Tidal heating estimate (0-1 scale)
+        tidal_heating = 0.0
+        if k < 3 and ptype in ('gas-giant', 'super-jupiter'):
+            # Closer moons get more tidal heating (Io is ~0.9)
+            tidal_heating = round(max(0, 0.9 - k * 0.35) * rng.uniform(0.6, 1.0), 2)
+
+        # Sub-type flags for moons
+        moon_flags = []
+        if moon_type == 'volcanic':
+            moon_flags.extend(['sulfur_eruptions', 'lava_lakes', 'tidal_flexing'])
+        elif moon_type == 'ice-shell':
+            moon_flags.extend(['subsurface_ocean', 'cracked_ice', 'possible_geysers'])
+        elif moon_type == 'atmosphere-moon':
+            moon_flags.extend(['thick_haze', 'hydrocarbon_lakes', 'cryogenic_surface'])
+        elif moon_type == 'ocean-moon':
+            moon_flags.extend(['subsurface_ocean', 'rocky_interior'])
+        elif moon_type == 'captured-irregular':
+            moon_flags.extend(['retrograde_orbit', 'high_inclination', 'irregular_shape'])
+        elif moon_type == 'binary-moon':
+            moon_flags.extend(['tidally_locked_pair', 'shared_barycenter'])
+
+        # Orbital properties for irregular captured moons
+        if moon_type == 'captured-irregular':
+            ecc = round(rng.uniform(0.2, 0.5), 3)
+            inc = round(rng.uniform(30, 170), 1)  # possibly retrograde
+        else:
+            ecc = round(rng.uniform(0.0, 0.05), 3)
+            inc = round(rng.gauss(0, 2.0), 1)
+
         letter = chr(ord('a') + k) if k < 26 else str(k)
         moons.append({
             'moon_name': f"{planet_rec['planet_name']} {letter}",
@@ -1353,6 +2376,10 @@ def _infer_moons_for_planet(planet_rec, star_name, rng):
             'mass_earth': moon_mass,
             'radius_earth': moon_radius,
             'moon_type': moon_type,
+            'tidal_heating': tidal_heating,
+            'eccentricity': ecc,
+            'inclination_deg': inc,
+            'sub_type_flags': moon_flags,
             'confidence': 'inferred',
         })
     planet_rec['moons'] = moons
@@ -1365,90 +2392,199 @@ _SOL_PLANETS = [
      'radius_earth': 0.383, 'semi_major_axis_au': 0.387, 'orbital_period_days': 87.97, 'eccentricity': 0.206,
      'inclination_deg': 7.0, 'temp_calculated_k': 440, 'temp_measured_k': 440, 'geometric_albedo': 0.142,
      'detection_type': 'Direct', 'molecules': None, 'discovered': 'Antiquity',
-     'planet_type': 'rocky', 'confidence': 'observed', 'moons': []},
+     'planet_type': 'iron-planet', 'sub_type_flags': ['stripped_mantle', 'metallic_surface', 'tidally_locked'],
+     'tidally_locked': True, 'confidence': 'observed', 'moons': [], 'ring_system': None},
     {'planet_name': 'Venus', 'planet_status': 'Confirmed', 'mass_earth': 0.815, 'mass_source': 'true_mass',
      'radius_earth': 0.949, 'semi_major_axis_au': 0.723, 'orbital_period_days': 224.7, 'eccentricity': 0.007,
      'inclination_deg': 3.4, 'temp_calculated_k': 737, 'temp_measured_k': 737, 'geometric_albedo': 0.689,
      'detection_type': 'Direct', 'molecules': 'CO2, N2, SO2', 'discovered': 'Antiquity',
-     'planet_type': 'rocky', 'confidence': 'observed',
-     'moons': []},
+     'planet_type': 'rocky', 'sub_type_flags': ['thick_atmosphere', 'greenhouse_runaway'],
+     'tidally_locked': False, 'confidence': 'observed', 'moons': [], 'ring_system': None},
     {'planet_name': 'Earth', 'planet_status': 'Confirmed', 'mass_earth': 1.0, 'mass_source': 'true_mass',
      'radius_earth': 1.0, 'semi_major_axis_au': 1.0, 'orbital_period_days': 365.25, 'eccentricity': 0.017,
      'inclination_deg': 0.0, 'temp_calculated_k': 288, 'temp_measured_k': 288, 'geometric_albedo': 0.367,
      'detection_type': 'Direct', 'molecules': 'N2, O2, Ar, CO2, H2O', 'discovered': 'Antiquity',
-     'planet_type': 'rocky', 'confidence': 'observed',
-     'moons': [{'moon_name': 'Moon', 'orbital_radius_au': 0.00257, 'mass_earth': 0.0123, 'radius_earth': 0.273, 'moon_type': 'rocky', 'confidence': 'observed'}]},
+     'planet_type': 'earth-like', 'sub_type_flags': ['habitable_zone', 'possible_biosignatures', 'plate_tectonics', 'global_ocean'],
+     'tidally_locked': False, 'confidence': 'observed', 'ring_system': None,
+     'moons': [{'moon_name': 'Moon', 'orbital_radius_au': 0.00257, 'mass_earth': 0.0123, 'radius_earth': 0.273,
+                'moon_type': 'cratered-airless', 'tidal_heating': 0.0, 'eccentricity': 0.0549, 'inclination_deg': 5.15,
+                'sub_type_flags': ['synchronous_rotation', 'impact_origin'], 'confidence': 'observed'}]},
     {'planet_name': 'Mars', 'planet_status': 'Confirmed', 'mass_earth': 0.107, 'mass_source': 'true_mass',
      'radius_earth': 0.532, 'semi_major_axis_au': 1.524, 'orbital_period_days': 687.0, 'eccentricity': 0.093,
      'inclination_deg': 1.85, 'temp_calculated_k': 210, 'temp_measured_k': 210, 'geometric_albedo': 0.170,
      'detection_type': 'Direct', 'molecules': 'CO2, N2, Ar', 'discovered': 'Antiquity',
-     'planet_type': 'rocky', 'confidence': 'observed',
+     'planet_type': 'desert-world', 'sub_type_flags': ['thin_atmosphere', 'ancient_ocean', 'polar_ice_caps'],
+     'tidally_locked': False, 'confidence': 'observed', 'ring_system': None,
      'moons': [
-         {'moon_name': 'Phobos', 'orbital_radius_au': 0.0000627, 'mass_earth': 0.0000000018, 'radius_earth': 0.00175, 'moon_type': 'rocky', 'confidence': 'observed'},
-         {'moon_name': 'Deimos', 'orbital_radius_au': 0.000157, 'mass_earth': 0.00000000025, 'radius_earth': 0.00098, 'moon_type': 'rocky', 'confidence': 'observed'},
+         {'moon_name': 'Phobos', 'orbital_radius_au': 0.0000627, 'mass_earth': 0.0000000018, 'radius_earth': 0.00175,
+          'moon_type': 'captured-irregular', 'tidal_heating': 0.0, 'eccentricity': 0.015, 'inclination_deg': 1.08,
+          'sub_type_flags': ['irregular_shape', 'tidally_decaying'], 'confidence': 'observed'},
+         {'moon_name': 'Deimos', 'orbital_radius_au': 0.000157, 'mass_earth': 0.00000000025, 'radius_earth': 0.00098,
+          'moon_type': 'captured-irregular', 'tidal_heating': 0.0, 'eccentricity': 0.0002, 'inclination_deg': 1.79,
+          'sub_type_flags': ['irregular_shape'], 'confidence': 'observed'},
      ]},
     {'planet_name': 'Jupiter', 'planet_status': 'Confirmed', 'mass_earth': 317.83, 'mass_source': 'true_mass',
      'radius_earth': 11.209, 'semi_major_axis_au': 5.203, 'orbital_period_days': 4332.59, 'eccentricity': 0.049,
      'inclination_deg': 1.31, 'temp_calculated_k': 165, 'temp_measured_k': 165, 'geometric_albedo': 0.538,
      'detection_type': 'Direct', 'molecules': 'H2, He, CH4, NH3', 'discovered': 'Antiquity',
-     'planet_type': 'gas-giant', 'confidence': 'observed',
+     'planet_type': 'gas-giant', 'sub_type_flags': ['banded_atmosphere', 'great_storm', 'magnetic_giant'],
+     'tidally_locked': False, 'confidence': 'observed',
+     'ring_system': {'inner_radius_re': 12.0, 'outer_radius_re': 22.0, 'ring_count': 3,
+                     'rings': [{'name': 'Halo', 'inner_radius_re': 12.0, 'outer_radius_re': 14.5, 'composition': 'rocky', 'optical_depth': 0.01},
+                               {'name': 'Main', 'inner_radius_re': 14.5, 'outer_radius_re': 18.0, 'composition': 'rocky', 'optical_depth': 0.05},
+                               {'name': 'Gossamer', 'inner_radius_re': 18.0, 'outer_radius_re': 22.0, 'composition': 'rocky', 'optical_depth': 0.001}],
+                     'gaps': [], 'shepherd_moons': [], 'total_mass_fraction': 1e-9},
      'moons': [
-         {'moon_name': 'Io', 'orbital_radius_au': 0.00282, 'mass_earth': 0.015, 'radius_earth': 0.286, 'moon_type': 'rocky', 'confidence': 'observed'},
-         {'moon_name': 'Europa', 'orbital_radius_au': 0.00449, 'mass_earth': 0.008, 'radius_earth': 0.245, 'moon_type': 'icy', 'confidence': 'observed'},
-         {'moon_name': 'Ganymede', 'orbital_radius_au': 0.00716, 'mass_earth': 0.025, 'radius_earth': 0.413, 'moon_type': 'icy', 'confidence': 'observed'},
-         {'moon_name': 'Callisto', 'orbital_radius_au': 0.01259, 'mass_earth': 0.018, 'radius_earth': 0.378, 'moon_type': 'icy', 'confidence': 'observed'},
-     ]},
+         {'moon_name': 'Io', 'orbital_radius_au': 0.00282, 'mass_earth': 0.015, 'radius_earth': 0.286,
+          'moon_type': 'volcanic', 'tidal_heating': 0.90, 'eccentricity': 0.004, 'inclination_deg': 0.04,
+          'sub_type_flags': ['sulfur_eruptions', 'lava_lakes', 'tidal_flexing', 'resonance_tidal_heating'], 'confidence': 'observed'},
+         {'moon_name': 'Europa', 'orbital_radius_au': 0.00449, 'mass_earth': 0.008, 'radius_earth': 0.245,
+          'moon_type': 'ice-shell', 'tidal_heating': 0.55, 'eccentricity': 0.009, 'inclination_deg': 0.47,
+          'sub_type_flags': ['subsurface_ocean', 'cracked_ice', 'possible_geysers', 'possible_biosignatures'], 'confidence': 'observed'},
+         {'moon_name': 'Ganymede', 'orbital_radius_au': 0.00716, 'mass_earth': 0.025, 'radius_earth': 0.413,
+          'moon_type': 'ice-shell', 'tidal_heating': 0.15, 'eccentricity': 0.001, 'inclination_deg': 0.18,
+          'sub_type_flags': ['subsurface_ocean', 'magnetic_field', 'largest_moon'], 'confidence': 'observed'},
+         {'moon_name': 'Callisto', 'orbital_radius_au': 0.01259, 'mass_earth': 0.018, 'radius_earth': 0.378,
+          'moon_type': 'cratered-airless', 'tidal_heating': 0.0, 'eccentricity': 0.007, 'inclination_deg': 0.19,
+          'sub_type_flags': ['heavily_cratered', 'undifferentiated'], 'confidence': 'observed'},
+     ],
+     'resonances': [{'partner': 'Saturn', 'ratio': '5:2', 'role': 'inner'}]},
     {'planet_name': 'Saturn', 'planet_status': 'Confirmed', 'mass_earth': 95.16, 'mass_source': 'true_mass',
      'radius_earth': 9.449, 'semi_major_axis_au': 9.537, 'orbital_period_days': 10759.2, 'eccentricity': 0.057,
      'inclination_deg': 2.49, 'temp_calculated_k': 134, 'temp_measured_k': 134, 'geometric_albedo': 0.499,
      'detection_type': 'Direct', 'molecules': 'H2, He, CH4', 'discovered': 'Antiquity',
-     'planet_type': 'gas-giant', 'confidence': 'observed',
+     'planet_type': 'gas-giant', 'sub_type_flags': ['banded_atmosphere', 'ring_king'],
+     'tidally_locked': False, 'confidence': 'observed',
+     'ring_system': {'inner_radius_re': 10.0, 'outer_radius_re': 24.0, 'ring_count': 5,
+                     'rings': [{'name': 'D', 'inner_radius_re': 10.0, 'outer_radius_re': 11.5, 'composition': 'icy', 'optical_depth': 0.01},
+                               {'name': 'C', 'inner_radius_re': 11.5, 'outer_radius_re': 14.0, 'composition': 'icy', 'optical_depth': 0.1},
+                               {'name': 'B', 'inner_radius_re': 14.5, 'outer_radius_re': 17.5, 'composition': 'icy', 'optical_depth': 1.5},
+                               {'name': 'A', 'inner_radius_re': 18.0, 'outer_radius_re': 21.0, 'composition': 'icy', 'optical_depth': 0.6},
+                               {'name': 'F', 'inner_radius_re': 21.2, 'outer_radius_re': 21.5, 'composition': 'icy', 'optical_depth': 0.2}],
+                     'gaps': [{'name': 'Cassini Division', 'position_re': 17.5, 'width_re': 0.5},
+                              {'name': 'Encke Gap', 'position_re': 20.3, 'width_re': 0.05}],
+                     'shepherd_moons': [{'name': 'Pan', 'orbital_radius_re': 20.3, 'diameter_km': 28.2},
+                                        {'name': 'Prometheus', 'orbital_radius_re': 21.2, 'diameter_km': 86.2}],
+                     'total_mass_fraction': 4e-8},
      'moons': [
-         {'moon_name': 'Titan', 'orbital_radius_au': 0.00817, 'mass_earth': 0.0225, 'radius_earth': 0.404, 'moon_type': 'icy', 'confidence': 'observed'},
-         {'moon_name': 'Enceladus', 'orbital_radius_au': 0.00159, 'mass_earth': 0.000018, 'radius_earth': 0.0396, 'moon_type': 'icy', 'confidence': 'observed'},
-         {'moon_name': 'Mimas', 'orbital_radius_au': 0.00124, 'mass_earth': 0.0000063, 'radius_earth': 0.0311, 'moon_type': 'icy', 'confidence': 'observed'},
-         {'moon_name': 'Rhea', 'orbital_radius_au': 0.00352, 'mass_earth': 0.000387, 'radius_earth': 0.120, 'moon_type': 'icy', 'confidence': 'observed'},
-     ]},
+         {'moon_name': 'Titan', 'orbital_radius_au': 0.00817, 'mass_earth': 0.0225, 'radius_earth': 0.404,
+          'moon_type': 'atmosphere-moon', 'tidal_heating': 0.05, 'eccentricity': 0.029, 'inclination_deg': 0.35,
+          'sub_type_flags': ['thick_haze', 'hydrocarbon_lakes', 'cryogenic_surface', 'nitrogen_atmosphere'], 'confidence': 'observed'},
+         {'moon_name': 'Enceladus', 'orbital_radius_au': 0.00159, 'mass_earth': 0.000018, 'radius_earth': 0.0396,
+          'moon_type': 'ice-shell', 'tidal_heating': 0.65, 'eccentricity': 0.005, 'inclination_deg': 0.02,
+          'sub_type_flags': ['subsurface_ocean', 'cracked_ice', 'possible_geysers', 'possible_biosignatures'], 'confidence': 'observed'},
+         {'moon_name': 'Mimas', 'orbital_radius_au': 0.00124, 'mass_earth': 0.0000063, 'radius_earth': 0.0311,
+          'moon_type': 'cratered-airless', 'tidal_heating': 0.0, 'eccentricity': 0.020, 'inclination_deg': 1.57,
+          'sub_type_flags': ['heavily_cratered', 'death_star_crater'], 'confidence': 'observed'},
+         {'moon_name': 'Rhea', 'orbital_radius_au': 0.00352, 'mass_earth': 0.000387, 'radius_earth': 0.120,
+          'moon_type': 'cratered-airless', 'tidal_heating': 0.0, 'eccentricity': 0.001, 'inclination_deg': 0.35,
+          'sub_type_flags': ['heavily_cratered', 'tenuous_ring'], 'confidence': 'observed'},
+     ],
+     'resonances': [{'partner': 'Jupiter', 'ratio': '5:2', 'role': 'outer'}]},
     {'planet_name': 'Uranus', 'planet_status': 'Confirmed', 'mass_earth': 14.54, 'mass_source': 'true_mass',
      'radius_earth': 4.007, 'semi_major_axis_au': 19.191, 'orbital_period_days': 30688.5, 'eccentricity': 0.047,
      'inclination_deg': 0.77, 'temp_calculated_k': 76, 'temp_measured_k': 76, 'geometric_albedo': 0.488,
      'detection_type': 'Direct', 'molecules': 'H2, He, CH4', 'discovered': '1781',
-     'planet_type': 'neptune-like', 'confidence': 'observed',
+     'planet_type': 'neptune-like', 'sub_type_flags': ['extreme_axial_tilt', 'retrograde_rotation'],
+     'tidally_locked': False, 'confidence': 'observed',
+     'ring_system': {'inner_radius_re': 5.0, 'outer_radius_re': 12.5, 'ring_count': 4,
+                     'rings': [{'name': '6-5-4', 'inner_radius_re': 5.0, 'outer_radius_re': 6.5, 'composition': 'rocky', 'optical_depth': 0.3},
+                               {'name': 'Alpha-Beta', 'inner_radius_re': 6.5, 'outer_radius_re': 8.0, 'composition': 'rocky', 'optical_depth': 0.4},
+                               {'name': 'Eta-Gamma-Delta', 'inner_radius_re': 8.0, 'outer_radius_re': 10.0, 'composition': 'mixed', 'optical_depth': 0.3},
+                               {'name': 'Epsilon', 'inner_radius_re': 10.0, 'outer_radius_re': 12.5, 'composition': 'rocky', 'optical_depth': 0.8}],
+                     'gaps': [], 'shepherd_moons': [{'name': 'Cordelia', 'orbital_radius_re': 10.0, 'diameter_km': 40.2},
+                                                     {'name': 'Ophelia', 'orbital_radius_re': 12.5, 'diameter_km': 42.8}],
+                     'total_mass_fraction': 1e-8},
      'moons': [
-         {'moon_name': 'Titania', 'orbital_radius_au': 0.00291, 'mass_earth': 0.00059, 'radius_earth': 0.124, 'moon_type': 'icy', 'confidence': 'observed'},
-         {'moon_name': 'Oberon', 'orbital_radius_au': 0.00390, 'mass_earth': 0.00051, 'radius_earth': 0.119, 'moon_type': 'icy', 'confidence': 'observed'},
-         {'moon_name': 'Ariel', 'orbital_radius_au': 0.00128, 'mass_earth': 0.000226, 'radius_earth': 0.0911, 'moon_type': 'icy', 'confidence': 'observed'},
-         {'moon_name': 'Miranda', 'orbital_radius_au': 0.000868, 'mass_earth': 0.0000110, 'radius_earth': 0.0369, 'moon_type': 'icy', 'confidence': 'observed'},
+         {'moon_name': 'Titania', 'orbital_radius_au': 0.00291, 'mass_earth': 0.00059, 'radius_earth': 0.124,
+          'moon_type': 'ice-shell', 'tidal_heating': 0.05, 'eccentricity': 0.001, 'inclination_deg': 0.08,
+          'sub_type_flags': ['cracked_ice', 'largest_uranian_moon'], 'confidence': 'observed'},
+         {'moon_name': 'Oberon', 'orbital_radius_au': 0.00390, 'mass_earth': 0.00051, 'radius_earth': 0.119,
+          'moon_type': 'cratered-airless', 'tidal_heating': 0.0, 'eccentricity': 0.001, 'inclination_deg': 0.07,
+          'sub_type_flags': ['heavily_cratered', 'dark_material'], 'confidence': 'observed'},
+         {'moon_name': 'Ariel', 'orbital_radius_au': 0.00128, 'mass_earth': 0.000226, 'radius_earth': 0.0911,
+          'moon_type': 'ice-shell', 'tidal_heating': 0.10, 'eccentricity': 0.001, 'inclination_deg': 0.04,
+          'sub_type_flags': ['cracked_ice', 'resurfaced'], 'confidence': 'observed'},
+         {'moon_name': 'Miranda', 'orbital_radius_au': 0.000868, 'mass_earth': 0.0000110, 'radius_earth': 0.0369,
+          'moon_type': 'cratered-airless', 'tidal_heating': 0.0, 'eccentricity': 0.001, 'inclination_deg': 4.34,
+          'sub_type_flags': ['chevron_terrain', 'extreme_geology'], 'confidence': 'observed'},
      ]},
     {'planet_name': 'Neptune', 'planet_status': 'Confirmed', 'mass_earth': 17.15, 'mass_source': 'true_mass',
      'radius_earth': 3.883, 'semi_major_axis_au': 30.07, 'orbital_period_days': 60190.0, 'eccentricity': 0.009,
      'inclination_deg': 1.77, 'temp_calculated_k': 72, 'temp_measured_k': 72, 'geometric_albedo': 0.442,
      'detection_type': 'Direct', 'molecules': 'H2, He, CH4', 'discovered': '1846',
-     'planet_type': 'neptune-like', 'confidence': 'observed',
+     'planet_type': 'neptune-like', 'sub_type_flags': ['banded_atmosphere', 'great_dark_spot'],
+     'tidally_locked': False, 'confidence': 'observed',
+     'ring_system': {'inner_radius_re': 5.3, 'outer_radius_re': 10.3, 'ring_count': 3,
+                     'rings': [{'name': 'Galle', 'inner_radius_re': 5.3, 'outer_radius_re': 5.8, 'composition': 'rocky', 'optical_depth': 0.01},
+                               {'name': 'Le Verrier', 'inner_radius_re': 7.0, 'outer_radius_re': 7.2, 'composition': 'rocky', 'optical_depth': 0.02},
+                               {'name': 'Adams', 'inner_radius_re': 10.0, 'outer_radius_re': 10.3, 'composition': 'rocky', 'optical_depth': 0.03}],
+                     'gaps': [], 'shepherd_moons': [{'name': 'Galatea', 'orbital_radius_re': 10.0, 'diameter_km': 174.8}],
+                     'total_mass_fraction': 1e-9},
      'moons': [
-         {'moon_name': 'Triton', 'orbital_radius_au': 0.00237, 'mass_earth': 0.00358, 'radius_earth': 0.212, 'moon_type': 'icy', 'confidence': 'observed'},
+         {'moon_name': 'Triton', 'orbital_radius_au': 0.00237, 'mass_earth': 0.00358, 'radius_earth': 0.212,
+          'moon_type': 'captured-irregular', 'tidal_heating': 0.25, 'eccentricity': 0.000, 'inclination_deg': 156.9,
+          'sub_type_flags': ['retrograde_orbit', 'nitrogen_geysers', 'captured_kbo', 'possible_subsurface_ocean'], 'confidence': 'observed'},
      ]},
 ]
 
 _SOL_BELTS = [
     {'belt_id': 'Sol_belt_inner', 'belt_type': 'rocky-asteroid', 'inner_radius_au': 2.2, 'outer_radius_au': 3.2,
      'estimated_bodies': 1100000, 'confidence': 'observed',
+     'resonance_gaps': [
+         {'resonance': '4:1', 'position_au': 2.064, 'width_au': 0.02, 'width_class': 'narrow', 'shaping_planet_sma': 5.203},
+         {'resonance': '3:1', 'position_au': 2.501, 'width_au': 0.06, 'width_class': 'wide', 'shaping_planet_sma': 5.203},
+         {'resonance': '5:2', 'position_au': 2.824, 'width_au': 0.04, 'width_class': 'moderate', 'shaping_planet_sma': 5.203},
+         {'resonance': '7:3', 'position_au': 2.957, 'width_au': 0.02, 'width_class': 'narrow', 'shaping_planet_sma': 5.203},
+         {'resonance': '2:1', 'position_au': 3.278, 'width_au': 0.06, 'width_class': 'wide', 'shaping_planet_sma': 5.203},
+     ],
+     'families': [
+         {'name': 'Flora', 'family_type': 'siliceous', 'spectral_class': 'S', 'center_au': 2.20, 'spread_au': 0.04, 'parent_diameter_km': 160.0, 'member_count': 400},
+         {'name': 'Vesta', 'family_type': 'basaltic', 'spectral_class': 'V', 'center_au': 2.36, 'spread_au': 0.05, 'parent_diameter_km': 525.4, 'member_count': 300},
+         {'name': 'Eos', 'family_type': 'carbonaceous', 'spectral_class': 'C', 'center_au': 3.01, 'spread_au': 0.06, 'parent_diameter_km': 104.0, 'member_count': 480},
+     ],
      'major_asteroids': [
-         {'name': 'Ceres', 'semi_major_axis_au': 2.77, 'diameter_km': 939.4, 'spectral_class': 'C', 'confidence': 'observed'},
-         {'name': 'Vesta', 'semi_major_axis_au': 2.36, 'diameter_km': 525.4, 'spectral_class': 'S', 'confidence': 'observed'},
-         {'name': 'Pallas', 'semi_major_axis_au': 2.77, 'diameter_km': 512.0, 'spectral_class': 'C', 'confidence': 'observed'},
-         {'name': 'Hygiea', 'semi_major_axis_au': 3.14, 'diameter_km': 434.0, 'spectral_class': 'C', 'confidence': 'observed'},
-         {'name': 'Juno', 'semi_major_axis_au': 2.67, 'diameter_km': 233.9, 'spectral_class': 'S', 'confidence': 'observed'},
+         {'name': 'Ceres', 'semi_major_axis_au': 2.77, 'diameter_km': 939.4, 'eccentricity': 0.076, 'inclination_deg': 10.59, 'spectral_class': 'C', 'confidence': 'observed'},
+         {'name': 'Vesta', 'semi_major_axis_au': 2.36, 'diameter_km': 525.4, 'eccentricity': 0.089, 'inclination_deg': 7.14, 'spectral_class': 'S', 'confidence': 'observed'},
+         {'name': 'Pallas', 'semi_major_axis_au': 2.77, 'diameter_km': 512.0, 'eccentricity': 0.231, 'inclination_deg': 34.83, 'spectral_class': 'C', 'confidence': 'observed'},
+         {'name': 'Hygiea', 'semi_major_axis_au': 3.14, 'diameter_km': 434.0, 'eccentricity': 0.116, 'inclination_deg': 3.84, 'spectral_class': 'C', 'confidence': 'observed'},
+         {'name': 'Juno', 'semi_major_axis_au': 2.67, 'diameter_km': 233.9, 'eccentricity': 0.256, 'inclination_deg': 12.97, 'spectral_class': 'S', 'confidence': 'observed'},
      ]},
     {'belt_id': 'Sol_belt_outer', 'belt_type': 'icy-kuiper', 'inner_radius_au': 30.0, 'outer_radius_au': 50.0,
      'estimated_bodies': 100000, 'confidence': 'observed',
+     'resonance_gaps': [
+         {'resonance': '2:3', 'position_au': 39.4, 'width_au': 1.0, 'width_class': 'wide', 'shaping_planet_sma': 30.07},
+     ],
+     'families': [],
+     'ice_dwarfs': [
+         {'name': 'Pluto', 'planet_type': 'ice-dwarf', 'mass_earth': 0.0022, 'radius_earth': 0.187, 'semi_major_axis_au': 39.48,
+          'eccentricity': 0.250, 'inclination_deg': 17.16, 'surface_type': 'nitrogen-ice', 'diameter_km': 2377.0, 'has_companion': True, 'confidence': 'observed'},
+         {'name': 'Eris', 'planet_type': 'ice-dwarf', 'mass_earth': 0.0028, 'radius_earth': 0.182, 'semi_major_axis_au': 67.78,
+          'eccentricity': 0.436, 'inclination_deg': 44.04, 'surface_type': 'nitrogen-ice', 'diameter_km': 2326.0, 'has_companion': True, 'confidence': 'observed'},
+         {'name': 'Haumea', 'planet_type': 'ice-dwarf', 'mass_earth': 0.0007, 'radius_earth': 0.128, 'semi_major_axis_au': 43.13,
+          'eccentricity': 0.195, 'inclination_deg': 28.22, 'surface_type': 'water-ice', 'diameter_km': 1632.0, 'has_companion': True, 'confidence': 'observed'},
+         {'name': 'Makemake', 'planet_type': 'ice-dwarf', 'mass_earth': 0.0005, 'radius_earth': 0.112, 'semi_major_axis_au': 45.79,
+          'eccentricity': 0.159, 'inclination_deg': 28.98, 'surface_type': 'methane-frost', 'diameter_km': 1430.0, 'has_companion': False, 'confidence': 'observed'},
+         {'name': 'Quaoar', 'planet_type': 'ice-dwarf', 'mass_earth': 0.0002, 'radius_earth': 0.088, 'semi_major_axis_au': 43.41,
+          'eccentricity': 0.039, 'inclination_deg': 7.99, 'surface_type': 'water-ice', 'diameter_km': 1121.0, 'has_companion': True, 'confidence': 'observed'},
+     ],
      'major_asteroids': [
-         {'name': 'Pluto', 'semi_major_axis_au': 39.48, 'diameter_km': 2377.0, 'spectral_class': 'C', 'confidence': 'observed'},
-         {'name': 'Eris', 'semi_major_axis_au': 67.78, 'diameter_km': 2326.0, 'spectral_class': 'C', 'confidence': 'observed'},
-         {'name': 'Haumea', 'semi_major_axis_au': 43.13, 'diameter_km': 1632.0, 'spectral_class': 'C', 'confidence': 'observed'},
-         {'name': 'Makemake', 'semi_major_axis_au': 45.79, 'diameter_km': 1430.0, 'spectral_class': 'C', 'confidence': 'observed'},
-         {'name': 'Quaoar', 'semi_major_axis_au': 43.41, 'diameter_km': 1121.0, 'spectral_class': 'C', 'confidence': 'observed'},
+         {'name': 'Pluto', 'semi_major_axis_au': 39.48, 'diameter_km': 2377.0, 'eccentricity': 0.250, 'inclination_deg': 17.16, 'spectral_class': 'C', 'confidence': 'observed'},
+         {'name': 'Eris', 'semi_major_axis_au': 67.78, 'diameter_km': 2326.0, 'eccentricity': 0.436, 'inclination_deg': 44.04, 'spectral_class': 'C', 'confidence': 'observed'},
+         {'name': 'Haumea', 'semi_major_axis_au': 43.13, 'diameter_km': 1632.0, 'eccentricity': 0.195, 'inclination_deg': 28.22, 'spectral_class': 'C', 'confidence': 'observed'},
+         {'name': 'Makemake', 'semi_major_axis_au': 45.79, 'diameter_km': 1430.0, 'eccentricity': 0.159, 'inclination_deg': 28.98, 'spectral_class': 'C', 'confidence': 'observed'},
+         {'name': 'Quaoar', 'semi_major_axis_au': 43.41, 'diameter_km': 1121.0, 'eccentricity': 0.039, 'inclination_deg': 7.99, 'spectral_class': 'C', 'confidence': 'observed'},
      ]},
+    {'belt_id': 'Sol_trojans_L4', 'belt_type': 'trojan-swarm', 'lagrange_point': 'L4',
+     'parent_planet': 'Jupiter', 'parent_sma_au': 5.203, 'angular_offset_deg': 60.0,
+     'angular_spread_deg': 13.0, 'inclination_spread_deg': 15.0,
+     'estimated_bodies': 6500, 'inner_radius_au': 4.79, 'outer_radius_au': 5.62,
+     'confidence': 'observed', 'major_asteroids': []},
+    {'belt_id': 'Sol_trojans_L5', 'belt_type': 'trojan-swarm', 'lagrange_point': 'L5',
+     'parent_planet': 'Jupiter', 'parent_sma_au': 5.203, 'angular_offset_deg': -60.0,
+     'angular_spread_deg': 13.0, 'inclination_spread_deg': 15.0,
+     'estimated_bodies': 4000, 'inner_radius_au': 4.79, 'outer_radius_au': 5.62,
+     'confidence': 'observed', 'major_asteroids': []},
 ]
 
 
@@ -2243,9 +3379,11 @@ def _load_systems_from_csv():
             for p in planets_by_star[mid]:
                 if not p.get('moons'):
                     _infer_moons_for_planet(p, mid, rng)
+                # Enrich with tidal lock + temp distribution + mineral abundance
+                _enrich_planet_physics(p, s.get('spectral_class', 'G'), s.get('luminosity', 1.0), rng)
             # Also infer belts for observed systems (skip if already set, e.g. Sol)
             if mid not in belts_by_star:
-                belts = _infer_belts_for_star(mid, s['spectral_class'], s['luminosity'])
+                belts = _infer_belts_for_star(mid, s['spectral_class'], s['luminosity'], planets=planets_by_star.get(mid, []))
                 if belts:
                     belts_by_star[mid] = belts
                     inferred_belt_count += len(belts)
@@ -2263,7 +3401,7 @@ def _load_systems_from_csv():
                 s['planet_count'] = len(inferred)
                 inferred_planet_count += len(inferred)
             # Infer belts too
-            belts = _infer_belts_for_star(mid, s['spectral_class'], s['luminosity'])
+            belts = _infer_belts_for_star(mid, s['spectral_class'], s['luminosity'], planets=planets_by_star.get(mid, []))
             if belts:
                 belts_by_star[mid] = belts
                 inferred_belt_count += len(belts)
@@ -2289,6 +3427,80 @@ def _ensure_caches():
     _systems_cache = systems
     _planet_cache = planets
     _belt_cache = belts
+
+
+# ── System architecture classification ───────────────────────────
+
+def _classify_system_architecture(planets, belts):
+    """Classify the overall system architecture.
+
+    Returns dict with:
+      - class: 'solar-analog', 'hot-jupiter-dominated', 'compact-multi',
+               'giant-rich', 'desert', 'exotic-mix', 'dwarf-only'
+      - features: list of notable characteristics
+    """
+    if not planets:
+        return {'class': 'desert', 'features': ['no_detected_planets']}
+
+    features = []
+    ptypes = [p.get('planet_type', '') for p in planets]
+    masses = [p.get('mass_earth', 0) or 0 for p in planets]
+    smas = [p.get('semi_major_axis_au', 0) or 0 for p in planets]
+
+    # Count categories
+    giants = sum(1 for t in ptypes if t in ('gas-giant', 'super-jupiter', 'hot-jupiter'))
+    rockies = sum(1 for t in ptypes if t in ('rocky', 'earth-like', 'super-earth', 'desert-world', 'iron-planet'))
+    neptunes = sum(1 for t in ptypes if t in ('neptune-like', 'warm-neptune', 'mini-neptune', 'sub-neptune'))
+    exotics = sum(1 for t in ptypes if t in ('eyeball-world', 'ocean-world', 'lava-world', 'carbon-planet', 'hycean', 'chthonian'))
+
+    # Hot Jupiter?
+    hot_jupiters = [p for p in planets if p.get('planet_type') == 'hot-jupiter']
+    if hot_jupiters:
+        features.append('hot_jupiter_present')
+
+    # Habitable zone planets
+    hz_planets = [p for p in planets if 'habitable_zone' in (p.get('sub_type_flags') or [])]
+    if hz_planets:
+        features.append(f'{len(hz_planets)}_hz_planets')
+
+    # Tidal locking
+    locked = sum(1 for p in planets if p.get('tidally_locked'))
+    if locked:
+        features.append(f'{locked}_tidally_locked')
+
+    # Resonance chains
+    resonant = sum(1 for p in planets if p.get('resonances'))
+    if resonant >= 3:
+        features.append('resonance_chain')
+
+    # Ring systems
+    ringed = sum(1 for p in planets if p.get('ring_system'))
+    if ringed:
+        features.append(f'{ringed}_ringed_planets')
+
+    # Belt richness
+    n_belts = len(belts)
+    trojans = sum(1 for b in belts if b.get('belt_type') == 'trojan-swarm')
+    if trojans:
+        features.append(f'{trojans}_trojan_swarms')
+
+    # Classify
+    if hot_jupiters and giants <= 2:
+        arch_class = 'hot-jupiter-dominated'
+    elif len(planets) >= 5 and max(smas) < 2.0:
+        arch_class = 'compact-multi'
+    elif giants >= 3:
+        arch_class = 'giant-rich'
+    elif rockies >= 3 and giants >= 1 and n_belts >= 2:
+        arch_class = 'solar-analog'
+    elif exotics >= 2:
+        arch_class = 'exotic-mix'
+    elif all(m < 0.5 for m in masses):
+        arch_class = 'dwarf-only'
+    else:
+        arch_class = 'mixed'
+
+    return {'class': arch_class, 'features': features}
 
 
 # ── System-detail API (per-star planetary system) ────────────────
@@ -2329,18 +3541,57 @@ def api_system_detail(main_id):
     inferred_count = sum(1 for p in planets if p.get('confidence') == 'inferred')
     total_moons = sum(len(p.get('moons', [])) for p in planets)
 
+    # Architecture classification
+    arch = _classify_system_architecture(planets, belts)
+
+    # Resonance chains across the system
+    resonance_chains = []
+    for p in planets:
+        for r in p.get('resonances', []):
+            if r.get('role') == 'inner':
+                resonance_chains.append({
+                    'inner': p['planet_name'],
+                    'outer': r['partner'],
+                    'ratio': r['ratio'],
+                })
+
+    # Planet type census
+    type_census = {}
+    for p in planets:
+        pt = p.get('planet_type', 'unknown')
+        type_census[pt] = type_census.get(pt, 0) + 1
+
+    # Moon type census
+    moon_type_census = {}
+    for p in planets:
+        for m in p.get('moons', []):
+            mt = m.get('moon_type', 'unknown')
+            moon_type_census[mt] = moon_type_census.get(mt, 0) + 1
+
+    # Trojan swarm count
+    trojan_count = sum(1 for b in belts if b.get('belt_type') == 'trojan-swarm')
+
+    # Count ring-bearing planets
+    ringed_count = sum(1 for p in planets if p.get('ring_system'))
+
     return jsonify({
         'star': star,
         'planets': planets,
         'belts': belts,
         'habitable_zone': {'inner_au': hz_in, 'outer_au': hz_out},
         'protoplanetary_disc': disc,
+        'architecture': arch,
+        'resonance_chains': resonance_chains,
         'summary': {
             'observed_planets': observed_count,
             'inferred_planets': inferred_count,
             'total_planets': len(planets),
             'total_moons': total_moons,
             'total_belts': len(belts),
+            'trojan_swarms': trojan_count,
+            'ringed_planets': ringed_count,
+            'planet_types': type_census,
+            'moon_types': moon_type_census,
         },
     })
 

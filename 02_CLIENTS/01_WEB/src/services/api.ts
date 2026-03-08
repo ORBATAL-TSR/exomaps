@@ -10,6 +10,16 @@ import type {
   PlanetarySystemResponse,
   PlanetSummaryResponse,
   SystemGroupResponse,
+  Campaign,
+  CampaignListResponse,
+  CampaignMapResponse,
+  ExploreSystemResponse,
+  ExplorationDetail,
+  FactionListResponse,
+  Faction,
+  SimInitResponse,
+  SimTickResponse,
+  SimSnapshotResponse,
 } from '../types/api';
 
 // In development, React dev server runs on :3000, Flask API on :5000.
@@ -125,6 +135,130 @@ export async function getPlanetSummary(): Promise<PlanetSummaryResponse> {
 
 export async function getSystemGroup(groupName: string): Promise<SystemGroupResponse> {
   const { data } = await api.get<SystemGroupResponse>(`/system-group/${encodeURIComponent(groupName)}`);
+  return data;
+}
+
+/* ── Campaigns ─────────────────────────────────────── */
+
+export async function listCampaigns(
+  status: string = 'active',
+  limit = 100,
+  offset = 0,
+): Promise<CampaignListResponse> {
+  const { data } = await api.get<CampaignListResponse>('/campaigns', {
+    params: { status, limit, offset },
+  });
+  return data;
+}
+
+export async function createCampaign(
+  name: string,
+  seed?: number,
+  settings?: Record<string, unknown>,
+): Promise<Campaign> {
+  const { data } = await api.post<Campaign>('/campaigns', { name, seed, settings });
+  return data;
+}
+
+export async function getCampaign(campaignId: string): Promise<Campaign> {
+  const { data } = await api.get<Campaign>(`/campaigns/${campaignId}`);
+  return data;
+}
+
+export async function updateCampaign(
+  campaignId: string,
+  updates: Partial<Pick<Campaign, 'name' | 'status' | 'settings'>>,
+): Promise<Campaign> {
+  const { data } = await api.patch<Campaign>(`/campaigns/${campaignId}`, updates);
+  return data;
+}
+
+export async function archiveCampaign(campaignId: string): Promise<Campaign> {
+  const { data } = await api.delete<Campaign>(`/campaigns/${campaignId}`);
+  return data;
+}
+
+/* ── Campaign Map (Fog-of-War) ─────────────────────── */
+
+export async function getCampaignMap(
+  campaignId: string,
+  scanLevel = 1,
+): Promise<CampaignMapResponse> {
+  const { data } = await api.get<CampaignMapResponse>(`/campaigns/${campaignId}/map`, {
+    params: { scan_level: scanLevel },
+  });
+  return data;
+}
+
+export async function exploreSystem(
+  campaignId: string,
+  systemId: string,
+  opts?: { explored_by?: string; scan_level?: number; notes?: string },
+): Promise<ExploreSystemResponse> {
+  const { data } = await api.post<ExploreSystemResponse>(
+    `/campaigns/${campaignId}/systems/${encodeURIComponent(systemId)}/explore`,
+    opts ?? {},
+  );
+  return data;
+}
+
+export async function getExploration(
+  campaignId: string,
+  systemId: string,
+): Promise<ExplorationDetail> {
+  const { data } = await api.get<ExplorationDetail>(
+    `/campaigns/${campaignId}/systems/${encodeURIComponent(systemId)}`,
+  );
+  return data;
+}
+
+/* ── Factions ──────────────────────────────────────── */
+
+export async function listFactions(campaignId: string): Promise<FactionListResponse> {
+  const { data } = await api.get<FactionListResponse>(`/campaigns/${campaignId}/factions`);
+  return data;
+}
+
+export async function createFaction(
+  campaignId: string,
+  name: string,
+  color: string,
+  homeSystemId?: string,
+): Promise<Faction> {
+  const { data } = await api.post<Faction>(`/campaigns/${campaignId}/factions`, {
+    name,
+    color,
+    home_system_id: homeSystemId,
+  });
+  return data;
+}
+
+/* ── Campaign Simulation (via World Engine proxy) ──── */
+
+export async function campaignSimInit(campaignId: string): Promise<SimInitResponse> {
+  const { data } = await api.post<SimInitResponse>(
+    `/campaigns/${campaignId}/simulation/init`,
+  );
+  return data;
+}
+
+export async function campaignSimTick(
+  campaignId: string,
+  count = 1,
+): Promise<SimTickResponse> {
+  const { data } = await api.post<SimTickResponse>(
+    `/campaigns/${campaignId}/simulation/tick`,
+    { count },
+  );
+  return data;
+}
+
+export async function campaignSimSnapshot(
+  campaignId: string,
+): Promise<SimSnapshotResponse> {
+  const { data } = await api.get<SimSnapshotResponse>(
+    `/campaigns/${campaignId}/simulation/snapshot`,
+  );
   return data;
 }
 

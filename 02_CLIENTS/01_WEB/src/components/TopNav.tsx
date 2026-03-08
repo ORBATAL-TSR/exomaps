@@ -5,10 +5,11 @@ import type { PersonaResponse } from '../types/api';
 import './TopNav.css';
 
 const NAV_ITEMS = [
-  { to: '/',            label: 'Star Map',   icon: '✦' },
-  { to: '/simulation',  label: 'Simulation', icon: '⚙' },
-  { to: '/data-qa',     label: 'Data QA',    icon: '◉' },
-  { to: '/admin',       label: 'Admin',      icon: '⌘' },
+  { to: '/',            label: 'Star Map',    icon: '✦' },
+  { to: '/campaigns',   label: 'Campaigns',   icon: '⚑' },
+  { to: '/simulation',  label: 'Simulation',  icon: '⚙' },
+  { to: '/data-qa',     label: 'Data QA',     icon: '◉' },
+  { to: '/admin',       label: 'Admin',       icon: '⌘' },
 ];
 
 export default function TopNav() {

@@ -8,12 +8,23 @@ web clients view explored territory through these endpoints.
 All routes are prefixed with /api/campaigns.
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 import logging
+
+import campaign_dao as dao
 
 log = logging.getLogger(__name__)
 
 campaigns_bp = Blueprint('campaigns', __name__, url_prefix='/api/campaigns')
+
+
+def _engine():
+    """Get the SQLAlchemy engine from Flask app config."""
+    engine = current_app.config.get('DB_ENGINE')
+    if engine is None:
+        raise RuntimeError('Database engine not configured')
+    return engine
 
 
 # ── Campaign CRUD ──────────────────────────────────────
@@ -26,52 +37,75 @@ def create_campaign():
     name = body.get('name', 'Untitled Campaign')
     seed = body.get('seed')
     settings = body.get('settings', {})
-    # TODO: INSERT INTO app_simulation.campaign
-    log.info('Campaign created: %s', name)
-    return jsonify({
-        'id': 'stub-campaign-id',
-        'name': name,
-        'seed': seed,
-        'settings': settings,
-        'status': 'active',
-    }), 201
+    owner_id = body.get('owner_id')
+
+    try:
+        result = dao.create_campaign(
+            _engine(), name=name, seed=seed, settings=settings, owner_id=owner_id,
+        )
+        log.info('Campaign created: %s (id=%s)', name, result.get('id'))
+        return jsonify(result), 201
+    except SQLAlchemyError as exc:
+        log.error('Failed to create campaign: %s', exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 @campaigns_bp.route('', methods=['GET'])
 def list_campaigns():
     """List all campaigns (optionally filtered by status)."""
     status = request.args.get('status', 'active')
-    # TODO: SELECT FROM app_simulation.campaign WHERE status = ?
-    return jsonify({'campaigns': [], 'total': 0, 'filter_status': status})
+    limit = request.args.get('limit', 100, type=int)
+    offset = request.args.get('offset', 0, type=int)
+
+    try:
+        result = dao.list_campaigns(
+            _engine(), status=status or None, limit=limit, offset=offset,
+        )
+        return jsonify(result)
+    except SQLAlchemyError as exc:
+        log.error('Failed to list campaigns: %s', exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 @campaigns_bp.route('/<campaign_id>', methods=['GET'])
 def get_campaign(campaign_id):
     """Get campaign details + summary stats."""
-    # TODO: SELECT FROM app_simulation.v_campaign_summary WHERE campaign_id = ?
-    return jsonify({
-        'id': campaign_id,
-        'name': 'Stub Campaign',
-        'status': 'active',
-        'systems_explored': 0,
-        'planets_surveyed': 0,
-        'factions': 0,
-    })
+    try:
+        result = dao.get_campaign(_engine(), campaign_id)
+        if result is None:
+            return jsonify({'error': 'not_found', 'message': f'Campaign {campaign_id} not found'}), 404
+        return jsonify(result)
+    except SQLAlchemyError as exc:
+        log.error('Failed to get campaign %s: %s', campaign_id, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 @campaigns_bp.route('/<campaign_id>', methods=['PATCH'])
 def update_campaign(campaign_id):
     """Update campaign name, settings, or status."""
     body = request.get_json(force=True)
-    # TODO: UPDATE app_simulation.campaign SET ... WHERE id = ?
-    return jsonify({'id': campaign_id, 'updated': True})
+
+    try:
+        result = dao.update_campaign(_engine(), campaign_id, **body)
+        if result is None:
+            return jsonify({'error': 'not_found', 'message': f'Campaign {campaign_id} not found'}), 404
+        return jsonify(result)
+    except SQLAlchemyError as exc:
+        log.error('Failed to update campaign %s: %s', campaign_id, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 @campaigns_bp.route('/<campaign_id>', methods=['DELETE'])
 def delete_campaign(campaign_id):
     """Archive (soft-delete) a campaign."""
-    # TODO: UPDATE app_simulation.campaign SET status = 'archived' WHERE id = ?
-    return jsonify({'id': campaign_id, 'status': 'archived'})
+    try:
+        result = dao.archive_campaign(_engine(), campaign_id)
+        if result is None:
+            return jsonify({'error': 'not_found', 'message': f'Campaign {campaign_id} not found'}), 404
+        return jsonify(result)
+    except SQLAlchemyError as exc:
+        log.error('Failed to archive campaign %s: %s', campaign_id, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 # ── Fog-of-War Map ─────────────────────────────────────
@@ -85,14 +119,13 @@ def get_campaign_map(campaign_id):
     Query params: ?scan_level=1 (minimum scan level filter)
     """
     min_scan = request.args.get('scan_level', 1, type=int)
-    # TODO: SELECT FROM app_simulation.v_campaign_map
-    #       WHERE campaign_id = ? AND scan_level >= ?
-    return jsonify({
-        'campaign_id': campaign_id,
-        'systems': [],
-        'total_explored': 0,
-        'min_scan_level': min_scan,
-    })
+
+    try:
+        result = dao.get_campaign_map(_engine(), campaign_id, min_scan_level=min_scan)
+        return jsonify(result)
+    except SQLAlchemyError as exc:
+        log.error('Failed to get campaign map %s: %s', campaign_id, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 # ── Exploration ────────────────────────────────────────
@@ -108,30 +141,35 @@ def explore_system(campaign_id, system_id):
     explored_by = body.get('explored_by')
     scan_level = body.get('scan_level', 1)
     notes = body.get('notes')
-    # TODO: INSERT INTO app_simulation.exploration (campaign_id, system_main_id, ...)
-    #       ON CONFLICT (campaign_id, system_main_id) DO UPDATE SET scan_level = GREATEST(...)
-    log.info('System explored: %s in campaign %s (level %d)',
-             system_id, campaign_id, scan_level)
-    return jsonify({
-        'campaign_id': campaign_id,
-        'system_main_id': system_id,
-        'explored_by': explored_by,
-        'scan_level': scan_level,
-        'is_new': True,
-    }), 201
+
+    try:
+        result = dao.explore_system(
+            _engine(),
+            campaign_id=campaign_id,
+            system_id=system_id,
+            explored_by=explored_by,
+            scan_level=scan_level,
+            notes=notes,
+        )
+        is_new = result.get('is_new', True)
+        status_code = 201 if is_new else 200
+        log.info('System explored: %s in campaign %s (level %d, new=%s)',
+                 system_id, campaign_id, scan_level, is_new)
+        return jsonify(result), status_code
+    except SQLAlchemyError as exc:
+        log.error('Failed to explore system %s: %s', system_id, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 @campaigns_bp.route('/<campaign_id>/systems/<path:system_id>', methods=['GET'])
 def get_exploration(campaign_id, system_id):
     """Get exploration details for a specific system in a campaign."""
-    # TODO: SELECT FROM app_simulation.exploration WHERE campaign_id = ? AND system_main_id = ?
-    return jsonify({
-        'campaign_id': campaign_id,
-        'system_main_id': system_id,
-        'explored': False,
-        'scan_level': 0,
-        'planets': [],
-    })
+    try:
+        result = dao.get_exploration(_engine(), campaign_id, system_id)
+        return jsonify(result)
+    except SQLAlchemyError as exc:
+        log.error('Failed to get exploration %s/%s: %s', campaign_id, system_id, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 # ── Baked Planet Assets ────────────────────────────────
@@ -145,24 +183,41 @@ def bake_planet(campaign_id, system_id, planet_index):
     The desktop generates the planet, then POSTs the textures here
     so web clients can display them without a GPU.
 
-    Body (multipart or JSON):
+    Body (JSON):
       - generation_seed: int
+      - scan_level: 1|2|3
       - summary_json: { composition, atmosphere, geology }
-      - albedo: base64 or file
-      - heightmap: base64 or file
-      - normal: base64 or file
-      - pbr: base64 or file
-      - thumbnail: base64 (128x128 preview)
+      - albedo_url: string (URL or base64)
+      - heightmap_url: string
+      - normal_url: string
+      - pbr_url: string
+      - thumbnail_url: string (128x128 preview)
     """
     body = request.get_json(force=True) if request.is_json else {}
-    planet_key = f"{system_id}_{planet_index}"
-    # TODO: INSERT INTO app_simulation.explored_planet (...)
-    log.info('Planet baked: %s in campaign %s', planet_key, campaign_id)
-    return jsonify({
-        'campaign_id': campaign_id,
-        'planet_key': planet_key,
-        'stored': True,
-    }), 201
+
+    try:
+        result = dao.bake_planet(
+            _engine(),
+            campaign_id=campaign_id,
+            system_id=system_id,
+            planet_index=planet_index,
+            generation_seed=body.get('generation_seed'),
+            scan_level=body.get('scan_level', 1),
+            summary_json=body.get('summary_json'),
+            albedo_url=body.get('albedo_url'),
+            heightmap_url=body.get('heightmap_url'),
+            normal_url=body.get('normal_url'),
+            pbr_url=body.get('pbr_url'),
+            thumbnail_url=body.get('thumbnail_url'),
+        )
+        if 'error' in result:
+            return jsonify(result), 409
+        planet_key = f"{system_id}_{planet_index}"
+        log.info('Planet baked: %s in campaign %s', planet_key, campaign_id)
+        return jsonify(result), 201
+    except SQLAlchemyError as exc:
+        log.error('Failed to bake planet %s_%d: %s', system_id, planet_index, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 @campaigns_bp.route('/<campaign_id>/planets/<planet_key>/textures', methods=['GET'])
@@ -171,26 +226,31 @@ def get_planet_textures(campaign_id, planet_key):
     Retrieve baked textures for a planet (for web client rendering).
     Returns URLs or inline base64 depending on storage backend.
     """
-    # TODO: SELECT FROM app_simulation.explored_planet WHERE planet_key = ?
-    return jsonify({
-        'planet_key': planet_key,
-        'albedo_url': None,
-        'heightmap_url': None,
-        'normal_url': None,
-        'pbr_url': None,
-        'thumbnail_url': None,
-        'summary': None,
-    })
+    try:
+        result = dao.get_planet_textures(_engine(), campaign_id, planet_key)
+        if result is None:
+            return jsonify({
+                'error': 'not_found',
+                'message': f'No textures found for planet {planet_key} in campaign {campaign_id}',
+            }), 404
+        return jsonify(result)
+    except SQLAlchemyError as exc:
+        log.error('Failed to get textures for %s: %s', planet_key, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
-# ── Factions (stub) ───────────────────────────────────
+# ── Factions ──────────────────────────────────────────
 
 
 @campaigns_bp.route('/<campaign_id>/factions', methods=['GET'])
 def list_factions(campaign_id):
     """List all factions in a campaign."""
-    # TODO: SELECT FROM app_simulation.campaign_faction WHERE campaign_id = ?
-    return jsonify({'campaign_id': campaign_id, 'factions': []})
+    try:
+        factions = dao.list_factions(_engine(), campaign_id)
+        return jsonify({'campaign_id': campaign_id, 'factions': factions})
+    except SQLAlchemyError as exc:
+        log.error('Failed to list factions for %s: %s', campaign_id, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500
 
 
 @campaigns_bp.route('/<campaign_id>/factions', methods=['POST'])
@@ -200,10 +260,22 @@ def create_faction(campaign_id):
     name = body.get('name', 'Unknown Faction')
     color = body.get('color', '#4d9fff')
     home_system = body.get('home_system_id')
-    # TODO: INSERT INTO app_simulation.campaign_faction (...)
-    return jsonify({
-        'campaign_id': campaign_id,
-        'name': name,
-        'color': color,
-        'home_system_id': home_system,
-    }), 201
+
+    try:
+        result = dao.create_faction(
+            _engine(),
+            campaign_id=campaign_id,
+            name=name,
+            color=color,
+            home_system_id=home_system,
+        )
+        log.info('Faction created: %s in campaign %s', name, campaign_id)
+        return jsonify(result), 201
+    except IntegrityError:
+        return jsonify({
+            'error': 'duplicate',
+            'message': f'Faction "{name}" already exists in this campaign',
+        }), 409
+    except SQLAlchemyError as exc:
+        log.error('Failed to create faction %s: %s', name, exc)
+        return jsonify({'error': 'db_error', 'message': str(exc)}), 500

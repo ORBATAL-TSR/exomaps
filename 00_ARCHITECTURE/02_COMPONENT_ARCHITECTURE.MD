@@ -15,11 +15,13 @@
    - Serves data and control endpoints to clients.
 7. **Web Visualization Client**
    - Strategic map, analysis, interaction.
-8. **Game Client Adapter Layer**
+8. **Desktop System Explorer**
+   - Tauri 2.10 native app with GLSL procedural planet generation.
+9. **Game Client Adapter Layer**
    - Efficient state streaming/snapshot API.
 
 ## Data Flow
-Raw Sources -> Staging -> Canonical Astro DB -> Inference Layer -> Versioned World Graph -> Simulation Runtime -> Client APIs -> Web/Game UI
+Raw Sources -> Staging -> Canonical Astro DB -> Inference Layer -> Versioned World Graph -> Simulation Runtime -> Client APIs -> Web/Desktop/Game UI
 
 ## Storage Strategy
 - **Relational DB** for canonical entities, provenance, and configs.
@@ -31,6 +33,82 @@ Raw Sources -> Staging -> Canonical Astro DB -> Inference Layer -> Versioned Wor
 - **Confidence-tagged entities** (`observed`, `candidate`, `inferred`, `simulated`).
 - **Reproducible deterministic generation** (seed + model version).
 - **Read-optimized API projections** for map rendering.
+
+---
+
+## Desktop Client Component Architecture
+
+### Core Components
+
+```
+ProceduralPlanet.tsx (2,400 LOC)
+├── Planet Type Profiles (V record — 40+ types)
+├── World Genome System (20 surfaces × 11 atmospheres × 9 hydrospheres)
+├── deriveWorldVisuals() — physics → GLSL uniform pipeline
+├── GLSL Vertex Shader — noise heightfield + displacement
+├── GLSL Fragment Shader
+│   ├── 6-biome palette blending
+│   ├── Terrain age effects (craters, weathering, volcanic flows)
+│   ├── Tectonics effects (fault scarps, folded mountains)
+│   ├── Tidally locked eyeball rendering
+│   ├── Ocean depth transparency (seafloor visible in shallows)
+│   ├── Star-dependent vegetation colors
+│   └── Temperature/mineral overlay maps
+├── Atmosphere Shell (standard Fresnel scattering)
+└── Thick Atmosphere Multi-Shell (Venus types: 2-3 cloud decks)
+```
+
+```
+SystemFocusView.tsx (2,900 LOC)
+├── Depth Navigation (system → planet → surface → colony)
+├── Camera Controller (fly-to, orrery overhead, close-up)
+├── Star System Orrery
+│   ├── Orbital tracks + planet spheres
+│   ├── Frost line / habitable zone indicators
+│   ├── Asteroid/Kuiper belt rendering
+│   └── layoutMoonOrbits() — collision-aware moon spacing
+├── Sidebar Tree (star → planets → moons, clickable navigation)
+├── Breadcrumb Bar (depth navigation history)
+├── Tidal Lock Filtering (Roche-limit moon removal)
+└── Colony Build Mode Controls
+```
+
+```
+ColonyOverlay.tsx (683 LOC) + ColonyTerrain.ts (766 LOC)
+├── 256×128 heightfield grid (JS noise, seed × 137.0)
+├── A* pathfinding with road-cost awareness (70% discount)
+├── Territory flood-fill + jittered-corner borders
+├── Coastline detection + rendering
+├── Building placement (terrain-projected)
+├── GLB model import for structures
+└── Catmull-Rom road spline smoothing
+```
+
+### GLSL Uniform Reference
+
+| Uniform | Type | Source | Purpose |
+|---------|------|--------|---------|
+| uColor1/2/3 | vec3 | Profile + genome | Biome palette colors |
+| uOceanColor | vec3 | Profile | Water/liquid tint |
+| uOceanLevel | float | Profile | Sea level threshold |
+| uAtmColor | vec3 | Profile | Atmosphere Rayleigh color |
+| uAtmThickness | float | Profile | Atmosphere opacity/depth |
+| uEmissive | float | Temperature | Lava glow (>800K) |
+| uIceCaps | float | Temperature | Polar ice coverage |
+| uCloudDensity | float | Profile | Cloud layer opacity |
+| uNoiseScale | float | Profile | Terrain frequency |
+| uSeed | float | seed × 137 | Deterministic noise |
+| uCraterDensity | float | Age/atm | Impact crater frequency |
+| uCrackIntensity | float | Tectonics | Surface fissure depth |
+| uMountainHeight | float | Tectonics | Peak elevation scale |
+| uValleyDepth | float | Tectonics | Canyon depth scale |
+| uVolcanism | float | Heat/tidal | Volcanic feature density |
+| uTerrainAge | float | Derived 0-1 | Ancient→weathered, young→smooth |
+| uTectonics | float | Derived 0-1 | Fault scarps, folded mountains |
+| uTidallyLocked | float | Orbital | Enables eyeball rendering |
+| uFoliageColor | vec3 | Star type | Vegetation tint by spectral class |
+| uIsGas | float | Type | Disables terrain for gas giants |
+| uIsIceWorld | float | Frost line | Enables ice-world visuals |
 
 ## API Surface (Conceptual)
 - `/astro/world/latest`

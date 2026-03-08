@@ -81,6 +81,7 @@ services:
     environment:
       POSTGRES_HOST: db                    # Docker internal name for db access
       REDIS_HOST: redis                    # Docker internal name for redis access
+      WORLD_ENGINE_URL: http://world_engine:5001  # Internal World Engine service
       FLASK_ENV: development
       PYTHONUNBUFFERED: "1"
     networks:
@@ -91,6 +92,33 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  # World Engine — Campaign simulation service
+  world_engine:
+    build:
+      context: ../../01_SERVICES/03_WORLD_ENGINE/
+      dockerfile: Dockerfile
+    container_name: exomaps-world-engine
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      WORLD_ENGINE_PORT: "5001"
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/engine/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
 networks:
   backend:

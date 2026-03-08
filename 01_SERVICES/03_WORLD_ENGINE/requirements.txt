@@ -1,0 +1,6 @@
+# World Engine Service
+flask>=3.0
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+numpy>=1.24
+gunicorn>=21.0
