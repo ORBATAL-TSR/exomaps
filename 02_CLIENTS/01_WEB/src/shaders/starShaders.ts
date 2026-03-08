@@ -4,6 +4,9 @@
  * Each star is a billboard quad positioned at its XYZ (parsecs).
  * Vertex shader sizes the point by luminosity & distance.
  * Fragment shader creates a radial glow colored by effective temperature.
+ *
+ * P0 UPGRADE: Vivid spectral colors, stronger size exaggeration,
+ * planet-host breathing pulse, enhanced corona.
  */
 
 /* ── Vertex shader ─────────────────────────────────── */
@@ -13,6 +16,8 @@ export const starVertexShader = /* glsl */ `
   attribute float aTeff;
   attribute float aMultiplicity;
   attribute float aConfidence;
+  attribute float aPlanetCount;
+  attribute float aSelected;
 
   // Passed to fragment shader
   varying float vTeff;
@@ -20,9 +25,14 @@ export const starVertexShader = /* glsl */ `
   varying float vMultiplicity;
   varying float vConfidence;
   varying float vDistToCamera;
+  varying float vPlanetCount;
+  varying float vSelected;
+  varying float vFocusFade;
 
   uniform float uTime;
   uniform float uBaseSize;
+  uniform vec3 uFocusCenter;
+  uniform float uFocusRadius;
 
   void main() {
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -33,20 +43,41 @@ export const starVertexShader = /* glsl */ `
     vLuminosity = aLuminosity;
     vMultiplicity = aMultiplicity;
     vConfidence = aConfidence;
+    vPlanetCount = aPlanetCount;
+    vSelected = aSelected;
 
-    // Point size: brighter stars are larger, distant stars shrink
-    float lumScale = 0.4 + 0.6 * pow(aLuminosity, 0.25);   // L^0.25 ≈ radius
-    float distScale = 300.0 / max(vDistToCamera, 1.0);      // perspective shrink
+    // Distance from focus center (in world space) for neighborhood dimming
+    float distFromFocus = length(position - uFocusCenter);
+    float focusFade = 1.0 - smoothstep(uFocusRadius * 0.7, uFocusRadius * 2.5, distFromFocus);
+    focusFade = max(focusFade, 0.25); // floor: distant stars still faintly visible
 
-    // Twinkle: per-star noise based on position + time
-    float twinkle = 1.0 + 0.12 * sin(uTime * 2.3 + position.x * 17.7)
-                       * cos(uTime * 1.7 + position.z * 13.3);
+    // Point size: luminosity-driven with clamped floor so dim stars stay visible
+    //   L^0.30 (slightly less exaggerated) + guaranteed minimum for faint M/L/T dwarfs
+    float lumScale = 0.30 + 0.70 * pow(max(aLuminosity, 0.001), 0.30);
+    lumScale = max(lumScale, 0.22);  // floor: even 0.0001 L☉ stars are visible
+
+    float distScale = 280.0 / max(vDistToCamera, 1.0);
+
+    // Twinkle: per-star scintillation (subtler)
+    float twinkle = 1.0 + 0.07 * sin(uTime * 2.8 + position.x * 19.3)
+                       * cos(uTime * 1.9 + position.z * 14.7);
+
+    // Planet-host breathing pulse (slow, rhythmic)
+    float breath = 1.0;
+    if (aPlanetCount > 0.0) {
+      breath = 1.0 + 0.07 * sin(uTime * 1.1 + position.y * 5.0);
+    }
 
     // Confidence: inferred stars are smaller
     float confScale = mix(0.55, 1.0, aConfidence);
 
-    gl_PointSize = uBaseSize * lumScale * distScale * twinkle * confScale;
-    gl_PointSize = clamp(gl_PointSize, 1.5, 64.0);
+    // Selected star is slightly larger
+    float selScale = aSelected > 0.5 ? 1.4 : 1.0;
+
+    gl_PointSize = uBaseSize * lumScale * distScale * twinkle * confScale * breath * selScale * focusFade;
+    gl_PointSize = clamp(gl_PointSize, 1.8, 55.0);  // lower max = less bloom on bright stars
+
+    vFocusFade = focusFade;
 
     gl_Position = projectionMatrix * mvPosition;
   }
@@ -59,81 +90,108 @@ export const starFragmentShader = /* glsl */ `
   varying float vMultiplicity;
   varying float vConfidence;
   varying float vDistToCamera;
+  varying float vPlanetCount;
+  varying float vSelected;
+  varying float vFocusFade;
 
   uniform float uTime;
 
-  // ── Blackbody Teff → approximate sRGB ──
-  // Based on Charity's color table for stellar photometry.
+  // ── Vivid Blackbody Teff → saturated sRGB ──
+  // Dramatically boosted compared to physical for visual impact.
   vec3 teffToColor(float teff) {
-    // Normalize to 0..1 range over 2000K..40000K
     float t = clamp((teff - 2000.0) / 38000.0, 0.0, 1.0);
 
-    // Red channel: warm stars are reddish
-    float r = mix(1.0, 0.6, smoothstep(0.0, 0.5, t));
+    // Red: M-types glow deep amber-orange
+    float r = mix(1.0, 0.55, smoothstep(0.0, 0.45, t));
 
-    // Green channel: peaks around G/F type
-    float g = mix(0.5, 1.0, smoothstep(0.0, 0.15, t))
-            * mix(1.0, 0.75, smoothstep(0.3, 1.0, t));
+    // Green: peaks around F/G, drops for hot & cool
+    float g = mix(0.35, 0.95, smoothstep(0.0, 0.12, t))
+            * mix(1.0, 0.65, smoothstep(0.3, 1.0, t));
 
-    // Blue channel: hot stars are blue
-    float b = mix(0.2, 1.0, smoothstep(0.05, 0.4, t));
+    // Blue: O/B types are vivid electric blue
+    float b = mix(0.08, 1.0, smoothstep(0.03, 0.35, t));
 
-    return vec3(r, g, b);
+    vec3 c = vec3(r, g, b);
+
+    // Saturation boost: push away from grey toward vivid
+    float luma = dot(c, vec3(0.299, 0.587, 0.114));
+    c = mix(vec3(luma), c, 1.5);  // 1.5x saturation
+
+    return clamp(c, 0.0, 1.0);
   }
 
   void main() {
-    // Distance from center of the point sprite (0..1)
     vec2 uv = gl_PointCoord - vec2(0.5);
-    float dist = length(uv) * 2.0;  // 0 at center, 1 at edge
+    float dist = length(uv) * 2.0;
 
-    // Discard outside circle
     if (dist > 1.0) discard;
 
-    // ── Core + corona radial profile ──
-    // Bright Gaussian core + soft exponential halo
-    float core = exp(-dist * dist * 8.0);          // tight bright center
-    float corona = exp(-dist * 2.5) * 0.4;         // soft glow
-    float bloom = exp(-dist * dist * 1.2) * 0.15;  // wide bloom halo
+    // ── Luminosity-aware radial profile ──
+    //    Bright stars (L>1) get wider corona; dim stars are tight points.
+    float lumNorm = clamp(log(max(vLuminosity, 0.001)) / 8.0 + 0.5, 0.0, 1.0);
 
+    float core   = exp(-dist * dist * 12.0);  // tighter core
+    // Corona width scales with luminosity: dim stars have almost no corona
+    float coronaWidth = mix(6.0, 2.8, lumNorm);  // 6.0 = tight (dim), 2.8 = wide (bright)
+    float coronaStrength = mix(0.12, 0.40, lumNorm);
+    float corona = exp(-dist * coronaWidth) * coronaStrength;
+    // Bloom: very subtle, only for luminous stars
+    float bloom  = exp(-dist * dist * 2.5) * mix(0.02, 0.12, lumNorm);
     float intensity = core + corona + bloom;
 
-    // ── Spectral color from temperature ──
+    // ── Camera-distance brightness attenuation ──
+    //    Stars far from camera dim in brightness, not just size.
+    float distAtten = 1.0 / (1.0 + vDistToCamera * 0.012);
+    intensity *= mix(distAtten, 1.0, 0.35);  // 35% floor so far stars don't vanish
+
+    // ── Spectral color ──
     vec3 baseColor = teffToColor(vTeff);
 
-    // Core is whiter (hotter)
-    vec3 coreColor = mix(baseColor, vec3(1.0), 0.6);
+    // Core burns white-hot (less aggressive white-out for dim stars)
+    float coreWhite = mix(0.35, 0.65, lumNorm);
+    vec3 coreColor = mix(baseColor, vec3(1.0), coreWhite);
     vec3 color = mix(baseColor, coreColor, core);
 
-    // ── Multiplicity indicator: subtle ring for binaries ──
+    // ── Multiplicity rings ──
     if (vMultiplicity >= 2.0) {
-      float ring = smoothstep(0.35, 0.37, dist) * smoothstep(0.42, 0.40, dist);
-      color += vec3(0.3, 0.6, 1.0) * ring * 0.8;
-      // Second smaller ring for trinary
+      float ring = smoothstep(0.33, 0.35, dist) * smoothstep(0.42, 0.39, dist);
+      color += vec3(0.25, 0.55, 1.0) * ring * 0.8;
       if (vMultiplicity >= 3.0) {
-        float ring2 = smoothstep(0.52, 0.54, dist) * smoothstep(0.59, 0.57, dist);
-        color += vec3(0.2, 0.8, 0.6) * ring2 * 0.6;
+        float ring2 = smoothstep(0.50, 0.52, dist) * smoothstep(0.59, 0.56, dist);
+        color += vec3(0.15, 0.85, 0.55) * ring2 * 0.6;
       }
     }
 
-    // ── Confidence: inferred stars have dashed halo ──
+    // ── Confidence shimmer for inferred stars ──
     if (vConfidence < 0.5) {
-      // Create a dashed ring at the edge
       float angle = atan(uv.y, uv.x);
       float dash = step(0.5, fract(angle * 3.0 / 3.14159));
-      float halo = smoothstep(0.7, 0.72, dist) * smoothstep(0.78, 0.76, dist);
-      color += vec3(0.5, 0.3, 0.1) * halo * dash * 0.4;
-      intensity *= 0.75;  // dimmer overall
+      float halo = smoothstep(0.68, 0.71, dist) * smoothstep(0.78, 0.75, dist);
+      color += vec3(0.4, 0.25, 0.08) * halo * dash * 0.3;
+      float shimmer = 0.85 + 0.15 * sin(uTime * 1.5 + vTeff * 0.01);
+      intensity *= shimmer * 0.72;
     }
 
-    // ── Distance fog: far stars fade toward deep blue ──
-    float fogFactor = smoothstep(60.0, 120.0, vDistToCamera);
-    color = mix(color, vec3(0.08, 0.12, 0.25), fogFactor * 0.5);
-    intensity *= mix(1.0, 0.5, fogFactor);
+    // ── Selected star: spectral-tinted selection aura ──
+    if (vSelected > 0.5) {
+      // Ring color = brighter version of the star's own spectral color
+      vec3 selColor = mix(baseColor, vec3(1.0), 0.5);
+      float selRing = smoothstep(0.52, 0.55, dist) * smoothstep(0.66, 0.62, dist);
+      float spin = sin(uTime * 3.0 + atan(uv.y, uv.x) * 8.0) * 0.5 + 0.5;
+      color += selColor * selRing * spin * 1.0;
+      // Subtle glow boost
+      intensity += 0.10 * exp(-dist * dist * 3.0);
+    }
 
-    // Alpha: smooth falloff at edge
-    float alpha = smoothstep(1.0, 0.4, dist) * intensity;
+    // ── Distance fog (pushed out further) ──
+    float fogFactor = smoothstep(70.0, 140.0, vDistToCamera);
+    color = mix(color, vec3(0.06, 0.10, 0.22), fogFactor * 0.50);
+    intensity *= mix(1.0, 0.35, fogFactor);
+
+    float alpha = smoothstep(1.0, 0.35, dist) * intensity;
+    alpha *= vFocusFade; // dim stars outside focus neighborhood
     alpha = clamp(alpha, 0.0, 1.0);
 
-    gl_FragColor = vec4(color * intensity, alpha);
+    gl_FragColor = vec4(color * intensity * vFocusFade, alpha);
   }
 `;

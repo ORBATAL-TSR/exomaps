@@ -1,0 +1,1203 @@
+/* ExoMaps Desktop — Application styles */
+
+.desktop-app {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #0a0e17;
+  color: #e8edf5;
+  overflow: hidden;
+}
+
+.desktop-content {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── GPU Status Bar ────────────────────────────────── */
+
+.gpu-status-bar {
+  height: 28px;
+  background: linear-gradient(180deg, #0c1420, #0a1018);
+  border-bottom: 1px solid rgba(30,48,80,0.4);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 16px;
+  font-size: 11px;
+  color: #556677;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.gpu-status-bar .status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gpu-status-bar .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.gpu-status-bar .status-dot.active { background: #4caf50; }
+.gpu-status-bar .status-dot.warning { background: #ff9800; }
+.gpu-status-bar .status-dot.error { background: #f44336; }
+
+.gpu-status-bar .spacer {
+  flex: 1;
+}
+
+.gpu-status-bar button {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: 1px solid #1e3050;
+  color: #8899aa;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.gpu-status-bar button:hover {
+  background: #1c2a3e;
+  color: #e8edf5;
+}
+
+/* ── Desktop Layout ────────────────────────────────── */
+
+.desktop-layout {
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+
+.desktop-layout .map-viewport {
+  flex: 1;
+  position: relative;
+}
+
+.desktop-layout .side-panel {
+  width: 360px;
+  background: linear-gradient(180deg, #0c1420, #0a1018);
+  border-left: 1px solid rgba(30,48,80,0.5);
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.desktop-layout .side-panel::-webkit-scrollbar {
+  width: 5px;
+}
+
+.desktop-layout .side-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.desktop-layout .side-panel::-webkit-scrollbar-thumb {
+  background: rgba(30,48,80,0.5);
+  border-radius: 3px;
+}
+
+.desktop-layout .side-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(77,159,255,0.3);
+}
+
+/* ── System Focus View ─────────────────────────────── */
+
+.system-focus {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.system-focus .focus-header {
+  height: 48px;
+  background: linear-gradient(180deg, #0f1923, #0c1520);
+  border-bottom: 1px solid rgba(30,48,80,0.5);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+}
+
+.system-focus .focus-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.system-focus .focus-header .back-btn {
+  background: linear-gradient(135deg, rgba(28,42,62,0.6), rgba(15,25,35,0.6));
+  border: 1px solid rgba(30,48,80,0.6);
+  color: #4d9fff;
+  padding: 5px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.system-focus .focus-header .back-btn:hover {
+  background: rgba(77,159,255,0.12);
+  border-color: rgba(77,159,255,0.4);
+  box-shadow: 0 0 12px rgba(77,159,255,0.08);
+}
+
+.system-focus .focus-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr minmax(260px, 0.6fr);
+  gap: 1px;
+  background: rgba(30,48,80,0.3);
+  min-height: 0;
+}
+
+/* ── Science panel (bottom, spans both cols) ──────── */
+
+.system-focus .science-panel {
+  background: #0a0e17;
+  overflow-y: auto;
+}
+
+.system-focus .science-panel::-webkit-scrollbar {
+  width: 5px;
+}
+
+.system-focus .science-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.system-focus .science-panel::-webkit-scrollbar-thumb {
+  background: rgba(30,48,80,0.5);
+  border-radius: 3px;
+}
+
+.system-focus .science-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(77,159,255,0.3);
+}
+
+.science-panel .metric-bar-track {
+  height: 6px;
+  background: rgba(22,32,48,0.6);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.science-panel table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.science-panel table th {
+  text-align: left;
+  color: #556677;
+  font-weight: 500;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(30,48,80,0.4);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.science-panel table td {
+  padding: 5px 8px;
+  color: #c0c8d4;
+  border-bottom: 1px solid rgba(15,25,35,0.6);
+}
+
+.science-panel table tr:hover td {
+  background: rgba(22,32,48,0.3);
+}
+
+.science-panel h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #e8edf5;
+  letter-spacing: 0.2px;
+}
+
+.science-panel h4 {
+  margin: 14px 0 8px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #556677;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.system-focus .viewport {
+  background: #030508;
+  position: relative;
+  overflow: hidden;
+}
+
+.system-focus .viewport-label {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-size: 9px;
+  color: #334455;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  z-index: 10;
+  font-weight: 500;
+}
+
+/* ── Planet card ───────────────────────────────────── */
+
+.planet-gen-card {
+  background: linear-gradient(135deg, rgba(22,32,48,0.7), rgba(15,25,35,0.8));
+  border: 1px solid rgba(30,48,80,0.5);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 8px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.planet-gen-card:hover {
+  border-color: rgba(77,159,255,0.2);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+}
+
+.planet-gen-card h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: #e8edf5;
+  font-weight: 500;
+}
+
+.planet-gen-card .gen-status {
+  font-size: 11px;
+  color: #556677;
+}
+
+.planet-gen-card .gen-status.generating {
+  color: #4d9fff;
+}
+
+.planet-gen-card .gen-status.complete {
+  color: #4caf50;
+}
+
+.planet-gen-card .composition-bar {
+  height: 8px;
+  border-radius: 4px;
+  margin-top: 6px;
+  display: flex;
+  overflow: hidden;
+}
+
+.planet-gen-card .composition-bar .iron { background: #a0522d; }
+.planet-gen-card .composition-bar .silicate { background: #b8860b; }
+.planet-gen-card .composition-bar .volatile { background: #4682b4; }
+.planet-gen-card .composition-bar .h-he { background: #9370db; }
+
+/* ── Animations ───────────────────────────────────── */
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1.0; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ══════════════════════════════════════════════════════
+   SystemFocusView V3 — 3-column with body nav sidebar
+   Inspired by reference designs: zone grouping, body
+   hierarchy tree, moon navigation, cinematic orrery
+   ══════════════════════════════════════════════════════ */
+
+.sf {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  background: #050810; color: #c0c8d4;
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+
+/* ── Header ── */
+.sf-header {
+  height: 44px; min-height: 44px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, #0f1923, #0a0e17);
+  border-bottom: 1px solid rgba(30,48,80,0.4);
+}
+.sf-back {
+  background: rgba(28,42,62,0.5);
+  border: 1px solid rgba(30,48,80,0.5);
+  color: #4d9fff; padding: 4px 10px;
+  border-radius: 4px; cursor: pointer;
+  font-size: 12px; transition: all 0.2s;
+}
+.sf-back:hover {
+  background: rgba(77,159,255,0.12);
+  border-color: rgba(77,159,255,0.35);
+}
+.sf-title {
+  margin: 0; font-size: 15px; font-weight: 500;
+  letter-spacing: 0.3px; color: #e8edf5;
+}
+.sf-badge {
+  padding: 2px 8px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+}
+.sf-arch {
+  background: rgba(77,159,255,0.12); color: #6aa8e8;
+  border: 1px solid rgba(77,159,255,0.2);
+}
+.sf-dim { font-size: 11px; color: #556677; }
+.sf-explore {
+  background: rgba(40,100,60,0.4);
+  border: 1px solid rgba(60,150,80,0.4);
+  color: #5ccc7a; padding: 4px 10px;
+  border-radius: 4px; cursor: pointer; font-size: 11px;
+}
+.sf-explored { color: #4caf50; font-size: 11px; }
+.sf-dev-btn {
+  background: rgba(80,60,20,0.4);
+  border: 1px solid rgba(120,90,30,0.4);
+  color: #ccaa55; padding: 4px 8px;
+  border-radius: 4px; cursor: pointer; font-size: 11px;
+}
+
+/* ═ Orbit speed controls ═ */
+.sf-speed {
+  display: flex; gap: 2px; align-items: center;
+  margin-right: 6px;
+}
+.sf-speed-btn {
+  background: rgba(28,42,62,0.45);
+  border: 1px solid rgba(30,48,80,0.4);
+  color: #5577aa; padding: 2px 7px;
+  border-radius: 3px; cursor: pointer;
+  font-size: 10px; font-weight: 500;
+  transition: all 0.15s;
+  min-width: 24px; text-align: center;
+}
+.sf-speed-btn:hover {
+  background: rgba(77,159,255,0.10);
+  border-color: rgba(77,159,255,0.30);
+  color: #6aa8e8;
+}
+.sf-speed-btn.active {
+  background: rgba(77,159,255,0.18);
+  border-color: rgba(77,159,255,0.45);
+  color: #8cc4ff;
+  box-shadow: 0 0 4px rgba(77,159,255,0.15);
+}
+
+/* ═ Map Controls Submenu ═ */
+.sf-map-controls {
+  position: relative;
+  margin-left: 4px;
+}
+.sf-map-toggle {
+  background: rgba(28,42,62,0.45);
+  border: 1px solid rgba(30,48,80,0.4);
+  color: #5577aa; padding: 3px 10px;
+  border-radius: 4px; cursor: pointer;
+  font-size: 10px; font-weight: 600;
+  transition: all 0.15s;
+}
+.sf-map-toggle:hover,
+.sf-map-toggle.active {
+  background: rgba(77,159,255,0.12);
+  border-color: rgba(77,159,255,0.35);
+  color: #8cc4ff;
+}
+.sf-map-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  background: rgba(8,12,22,0.92);
+  border: 1px solid rgba(50,70,110,0.45);
+  border-radius: 8px;
+  padding: 10px 12px;
+  backdrop-filter: blur(12px);
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.55);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.sf-map-menu-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.sf-map-btn {
+  flex: 1;
+  background: rgba(20,32,50,0.6);
+  border: 1px solid rgba(40,60,90,0.4);
+  color: #5577aa; padding: 5px 8px;
+  border-radius: 4px; cursor: pointer;
+  font-size: 10px; font-weight: 600;
+  transition: all 0.15s;
+  text-align: center;
+}
+.sf-map-btn:hover {
+  background: rgba(77,159,255,0.08);
+  color: #6aa8e8;
+}
+.sf-map-btn.active {
+  background: rgba(77,159,255,0.16);
+  border-color: rgba(77,159,255,0.4);
+  color: #8cc4ff;
+  box-shadow: 0 0 6px rgba(77,159,255,0.12);
+}
+.sf-map-btn-planet {
+  font-size: 9px;
+  border-color: rgba(60,80,40,0.5);
+}
+.sf-map-btn-planet.active {
+  background: rgba(120,200,80,0.14);
+  border-color: rgba(120,200,80,0.4);
+  color: #a8e060;
+  box-shadow: 0 0 6px rgba(120,200,80,0.12);
+}
+.sf-map-slider-label {
+  color: #5577aa;
+  font-size: 10px;
+  font-weight: 500;
+  min-width: 70px;
+}
+.sf-map-slider {
+  flex: 1;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(30,48,80,0.5);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.sf-map-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  background: #4d9fff;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(77,159,255,0.3);
+}
+
+/* ── Colony Builder controls (header-level) ── */
+.sf-map-menu-divider {
+  height: 1px;
+  background: rgba(50,70,110,0.35);
+  margin: 2px 0;
+}
+.sf-colony-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(50,70,110,0.3);
+}
+.sf-colony-toggle {
+  background: rgba(255,160,60,0.1);
+  border: 1px solid rgba(255,160,60,0.35);
+  color: #cc8833;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.sf-colony-toggle:hover {
+  background: rgba(255,160,60,0.18);
+  color: #eea844;
+}
+.sf-colony-toggle.active {
+  background: rgba(255,160,60,0.22);
+  border-color: rgba(255,160,60,0.6);
+  color: #ffbb55;
+  box-shadow: 0 0 8px rgba(255,160,60,0.2);
+}
+.sf-colony-types {
+  display: flex;
+  gap: 3px;
+}
+.sf-colony-type-btn {
+  width: 28px; height: 26px;
+  padding: 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(20,32,50,0.6);
+  border: 1px solid rgba(80,100,130,0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sf-colony-type-btn:hover {
+  background: rgba(255,180,80,0.1);
+  border-color: rgba(255,180,80,0.4);
+}
+.sf-colony-type-btn.active {
+  background: rgba(255,180,80,0.2);
+  border-color: rgba(255,180,80,0.55);
+  box-shadow: 0 0 6px rgba(255,180,80,0.15);
+}
+.sf-colony-count {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #8899aa;
+  white-space: nowrap;
+}
+.sf-colony-clear {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+  padding: 1px 3px;
+}
+.sf-colony-clear:hover {
+  opacity: 0.9;
+}
+.sf-colony-toggles {
+  display: flex;
+  gap: 2px;
+  margin-left: 4px;
+}
+.sf-colony-mini-btn {
+  background: rgba(30,40,60,0.6);
+  border: 1px solid rgba(100,130,180,0.25);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 5px;
+  color: #8899aa;
+  transition: all 0.15s;
+}
+.sf-colony-mini-btn:hover {
+  background: rgba(40,55,80,0.8);
+  border-color: rgba(100,160,255,0.4);
+}
+.sf-colony-mini-btn.active {
+  background: rgba(30,80,140,0.5);
+  border-color: rgba(60,140,255,0.5);
+  color: #aaccff;
+}
+.sf-colony-custom-name {
+  font-size: 9px;
+  color: #aabbcc;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 4px;
+  background: rgba(30,40,60,0.4);
+  border-radius: 3px;
+}
+/* Build mode cursor indicator */
+.sf-build-indicator {
+  position: absolute;
+  bottom: 12px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255,160,60,0.15);
+  border: 1px solid rgba(255,160,60,0.4);
+  color: #ffbb55;
+  font-size: 11px; font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 20px;
+  pointer-events: none;
+  z-index: 50;
+  backdrop-filter: blur(8px);
+  animation: sf-build-pulse 2s ease-in-out infinite;
+}
+@keyframes sf-build-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(255,160,60,0.15); }
+  50%      { box-shadow: 0 0 14px rgba(255,160,60,0.3); }
+}
+
+/* ══ V5 Spatial Viewport Layout ══ */
+.sf-viewport {
+  flex: 1; position: relative; min-height: 0;
+  display: flex; overflow: hidden;
+}
+
+/* Full-screen 3D canvas wrapper */
+.sf-canvas-wrap {
+  flex: 1; min-width: 0; min-height: 0;
+  position: relative;
+}
+.sf-canvas-wrap canvas {
+  display: block; width: 100% !important; height: 100% !important;
+}
+
+/* ── Depth breadcrumb overlay ── */
+.sf-overlay-crumb {
+  position: absolute; top: 12px; left: 14px; z-index: 10;
+  pointer-events: auto;
+}
+.sf-crumb {
+  display: flex; align-items: center; gap: 2px;
+  background: rgba(5,8,16,0.75);
+  padding: 5px 12px; border-radius: 20px;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(30,48,80,0.3);
+}
+.sf-crumb-item {
+  background: none; border: none;
+  display: flex; align-items: center; gap: 3px;
+  font-size: 11px; color: #4d9fff;
+  cursor: pointer; padding: 2px 4px;
+  border-radius: 3px; transition: all 0.15s;
+  font-family: inherit;
+}
+.sf-crumb-item:hover:not(:disabled) {
+  background: rgba(77,159,255,0.1);
+}
+.sf-crumb-item.current {
+  color: #c0d8ff; cursor: default;
+}
+.sf-crumb-item:disabled {
+  color: #c0d8ff; cursor: default; opacity: 1;
+}
+.sf-crumb-icon { font-size: 10px; }
+.sf-crumb-sep {
+  font-size: 10px; color: #334455;
+  margin: 0 1px;
+}
+
+/* ── Info card overlay → Persistent sidebar ── */
+.sf-sidebar {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 240px;
+  background: rgba(5,8,16,0.88);
+  backdrop-filter: blur(12px);
+  border-left: 1px solid rgba(30,48,80,0.3);
+  z-index: 10;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.sf-sidebar-scroll {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 10px 8px;
+}
+.sf-sidebar-scroll::-webkit-scrollbar { width: 4px; }
+.sf-sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sf-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(30,48,80,0.4); border-radius: 2px;
+}
+
+/* ── Star row at top of sidebar ── */
+.sf-tree-star {
+  padding-bottom: 8px; margin-bottom: 6px;
+  border-bottom: 1px solid rgba(30,48,80,0.2);
+}
+.sf-tree-star-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.sf-tree-star-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.sf-tree-star-name {
+  font-size: 12px; font-weight: 600; color: #e0e8f2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sf-tree-star-spec {
+  font-size: 10px; font-weight: 600;
+  flex-shrink: 0;
+}
+.sf-tree-star-meta {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-top: 4px; font-size: 9px; color: #556677;
+}
+
+/* ── Tree sections ── */
+.sf-tree-section {
+  margin-bottom: 8px;
+}
+.sf-tree-label {
+  font-size: 8px; font-weight: 700; color: #334455;
+  letter-spacing: 1.2px; text-transform: uppercase;
+  padding: 4px 4px 2px;
+}
+.sf-tree-sublabel {
+  font-size: 7px; font-weight: 700; color: #334455;
+  letter-spacing: 1px; text-transform: uppercase;
+  padding: 3px 0 2px;
+}
+
+/* ── Tree rows (planet/belt/moon) ── */
+.sf-tree-group { }
+.sf-tree-row {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 5px;
+  cursor: pointer; transition: all 0.15s;
+  border-radius: 3px; border-left: 2px solid transparent;
+  font-size: 11px;
+}
+.sf-tree-row:hover {
+  background: rgba(22,32,48,0.5);
+}
+.sf-tree-row.active {
+  background: rgba(77,159,255,0.08);
+  border-left-color: #4d9fff;
+}
+.sf-tree-row.moon {
+  padding-left: 12px; font-size: 10px;
+}
+.sf-tree-name {
+  color: #99aabb; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sf-tree-row.active .sf-tree-name { color: #e0e8f0; }
+.sf-tree-type {
+  font-size: 8px; color: #445566;
+  white-space: nowrap; flex-shrink: 0;
+}
+.sf-tree-stat {
+  font-size: 8px; color: #445566;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; flex-shrink: 0;
+}
+.sf-tree-badge {
+  font-size: 7px; color: #445566;
+  flex-shrink: 0;
+}
+.sf-tree-chevron {
+  font-size: 10px; color: #334455;
+  flex-shrink: 0; width: 10px; text-align: center;
+  transition: color 0.15s;
+}
+.sf-tree-row:hover .sf-tree-chevron { color: #667788; }
+.sf-tree-row.active .sf-tree-chevron { color: #4d9fff; }
+
+/* ── Expanded detail (inside tree) ── */
+.sf-tree-detail {
+  padding: 4px 2px 6px 10px;
+  border-left: 1px solid rgba(30,48,80,0.2);
+  margin-left: 6px;
+}
+.sf-tree-subsection {
+  margin: 4px 0;
+}
+.sf-tree-moon-group { }
+
+/* ── Mini stats (compact inline) ── */
+.sf-mini-stats {
+  display: flex; flex-wrap: wrap; gap: 3px;
+  margin-bottom: 4px;
+}
+.sf-mini-stats span {
+  font-size: 9px; color: #667788;
+  background: rgba(15,22,34,0.5);
+  padding: 1px 5px; border-radius: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Compact flags ── */
+.sf-flags-compact {
+  display: flex; flex-wrap: wrap; gap: 2px;
+  margin-bottom: 4px;
+}
+.sf-flag-sm {
+  font-size: 8px; color: #778899;
+  background: rgba(22,32,48,0.4);
+  padding: 1px 4px; border-radius: 2px;
+  border: 1px solid rgba(30,48,80,0.2);
+}
+
+/* ── Moon inline detail ── */
+.sf-moon-inline {
+  padding: 3px 2px 4px 14px;
+  border-left: 1px solid rgba(100,168,232,0.15);
+  margin-left: 4px;
+}
+.sf-moon-desc-compact {
+  font-size: 9px; color: #667788;
+  line-height: 1.4; margin: 3px 0;
+  padding: 3px 6px;
+  background: rgba(15,22,34,0.3);
+  border-radius: 3px;
+  border-left: 2px solid rgba(77,159,255,0.1);
+}
+
+/* ── Compact habitat items ── */
+.sf-habitat-compact {
+  display: flex; flex-wrap: wrap; gap: 3px;
+  margin: 3px 0;
+}
+.sf-habitat-inline {
+  font-size: 8px; color: #6a8a9a;
+  background: rgba(15,25,40,0.4);
+  padding: 1px 5px; border-radius: 2px;
+}
+.sf-habitat-item-compact {
+  font-size: 9px; color: #7a8a9a;
+  padding: 1px 0;
+}
+.sf-habitat-item-compact.dim { opacity: 0.5; }
+
+/* ── Ring row compact ── */
+.sf-ring-row-compact {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 9px; color: #8899aa;
+  padding: 1px 4px;
+}
+
+/* ── Architecture class ── */
+.sf-arch-class {
+  font-size: 10px; color: #6aa8e8;
+  margin-bottom: 3px; padding-left: 4px;
+}
+
+/* ── Belt overlay (over Canvas) ── */
+.sf-belt-overlay {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  right: 240px;
+  z-index: 8;
+  display: flex; flex-direction: column;
+  background: #060a12;
+}
+
+/* ── Loading overlay ── */
+.sf-empty-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #334455; font-size: 14px;
+  z-index: 5; pointer-events: none;
+}
+
+/* Nav dot (reused from V4) */
+.sf-nav-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0; display: block;
+}
+
+/* ── Body list (compact planet/moon rows in info card) ── */
+.sf-body-list {
+  display: flex; flex-direction: column; gap: 1px;
+}
+.sf-body-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 6px;
+  cursor: pointer; transition: all 0.15s;
+  border-radius: 3px; font-size: 11px;
+  border-left: 2px solid transparent;
+}
+.sf-body-row:hover {
+  background: rgba(22,32,48,0.5);
+  border-left-color: rgba(77,159,255,0.25);
+}
+.sf-body-row.active {
+  background: rgba(77,159,255,0.08);
+  border-left-color: #4d9fff;
+}
+.sf-body-name {
+  color: #c0c8d4; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 500;
+}
+.sf-body-type {
+  font-size: 9px; color: #556688;
+  white-space: nowrap;
+}
+.sf-body-stat {
+  font-size: 9px; color: #445566;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sf-body-moons {
+  font-size: 8px; color: #445566;
+}
+.sf-body-arrow {
+  font-size: 10px; color: #334455;
+  transition: color 0.15s; flex-shrink: 0;
+}
+.sf-body-row:hover .sf-body-arrow { color: #4d9fff; }
+
+/* ── Depth hint text ── */
+.sf-depth-hint {
+  font-size: 10px; color: #334455;
+  text-align: center; padding: 12px 8px;
+  font-style: italic;
+}
+
+/* ── Belt full-screen view ── */
+.sf-belt-fullview {
+  flex: 1; display: flex; flex-direction: column;
+  background: #060a12; min-height: 0; min-width: 0;
+}
+.sf-belt-chart {
+  flex: 1; min-height: 0; padding: 8px;
+}
+.sf-belt-chart canvas {
+  border-radius: 4px;
+}
+.sf-belt-legend {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  padding: 6px 14px 10px;
+  border-top: 1px solid rgba(30,48,80,0.15);
+}
+.sf-belt-legend-item {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; color: #778899;
+}
+.sf-belt-legend-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Belt detail items ── */
+.sf-belt-families {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.sf-belt-fam-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px; background: rgba(15,22,34,0.4);
+  border-radius: 3px; font-size: 11px;
+  flex-wrap: wrap;
+}
+.sf-belt-fam-item.gap {
+  border-left: 2px solid rgba(255,80,60,0.3);
+}
+.sf-belt-fam-item.sf-clickable {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.sf-belt-fam-item.sf-clickable:hover {
+  background: rgba(30,50,80,0.6);
+}
+.sf-belt-fam-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.sf-belt-fam-name {
+  color: #c0c8d4; font-weight: 500;
+}
+.sf-belt-fam-spec {
+  font-size: 9px; color: #667788;
+}
+
+/* ── Habitat infrastructure ── */
+.sf-habitat {
+  margin-bottom: 14px;
+  padding: 8px 10px;
+  background: rgba(15,25,40,0.5);
+  border: 1px solid rgba(30,48,80,0.2);
+  border-radius: 5px;
+}
+.sf-habitat-title {
+  margin: 0 0 6px; font-size: 10px; font-weight: 600;
+  color: #4d9fff; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.sf-habitat-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 0; font-size: 11px; color: #8899aa;
+}
+.sf-habitat-item.dim { opacity: 0.5; }
+
+/* ── PBR / Globe controls (now in info card) ── */
+.sf-globe-controls {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 10px;
+}
+.sf-tex-status {
+  font-size: 9px; color: #4d9fff;
+  display: flex; align-items: center; gap: 4px; opacity: 0.7;
+}
+.sf-tex-fail { color: #666; }
+.sf-spinner {
+  width: 10px; height: 10px;
+  border: 1.5px solid rgba(77,159,255,0.3);
+  border-top-color: #4d9fff;
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+.sf-pbr-toggle {
+  background: rgba(15,22,34,0.7);
+  border: 1px solid rgba(30,48,80,0.4);
+  color: #667788; padding: 3px 8px;
+  border-radius: 3px; cursor: pointer;
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.3px; transition: all 0.2s;
+}
+.sf-pbr-toggle:hover {
+  background: rgba(30,48,80,0.4);
+  border-color: rgba(77,159,255,0.3); color: #8899aa;
+}
+.sf-pbr-toggle.active {
+  background: rgba(77,159,255,0.1);
+  border-color: rgba(77,159,255,0.35); color: #4d9fff;
+}
+
+/* Info scrollable area */
+.sf-info { flex: 1; overflow-y: auto; padding: 14px; min-height: 0; }
+.sf-info::-webkit-scrollbar { width: 5px; }
+.sf-info::-webkit-scrollbar-track { background: transparent; }
+.sf-info::-webkit-scrollbar-thumb {
+  background: rgba(30,48,80,0.45); border-radius: 3px;
+}
+
+/* Planet/Moon header */
+.sf-planet-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.sf-planet-header h3 {
+  margin: 0; font-size: 16px; font-weight: 500; color: #e8edf5;
+  flex: 1; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.sf-type-badge {
+  padding: 2px 8px; border-radius: 4px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.4px;
+  border: 1px solid; white-space: nowrap;
+}
+
+/* Breadcrumb (moon → parent planet) */
+.sf-breadcrumb {
+  margin-bottom: 10px;
+}
+.sf-breadcrumb button {
+  background: rgba(22,32,48,0.4);
+  border: 1px solid rgba(30,48,80,0.25);
+  color: #4d9fff; padding: 3px 8px;
+  border-radius: 3px; cursor: pointer;
+  font-size: 10px; transition: all 0.2s;
+}
+.sf-breadcrumb button:hover {
+  background: rgba(77,159,255,0.08);
+  border-color: rgba(77,159,255,0.3);
+}
+
+/* Moon description text */
+.sf-moon-desc {
+  font-size: 11px; color: #778899;
+  line-height: 1.5; margin-bottom: 14px;
+  padding: 8px 10px;
+  background: rgba(15,22,34,0.4);
+  border-radius: 4px;
+  border-left: 2px solid rgba(77,159,255,0.15);
+}
+
+/* Flags */
+.sf-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.sf-flag {
+  font-size: 10px; color: #889aaa;
+  background: rgba(22,32,48,0.5); padding: 2px 7px;
+  border-radius: 3px; border: 1px solid rgba(30,48,80,0.3);
+}
+
+/* Stats grid */
+.sf-stats {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 2px; margin-bottom: 14px;
+}
+.sf-stat {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 8px; background: rgba(15,22,34,0.5); border-radius: 3px;
+}
+.sf-stat-k {
+  font-size: 10px; color: #556677;
+  text-transform: uppercase; letter-spacing: 0.4px; font-weight: 500;
+}
+.sf-stat-v {
+  font-size: 12px; color: #c0d0e0;
+  font-weight: 500; font-variant-numeric: tabular-nums;
+}
+
+/* Sections */
+.sf-section { margin-bottom: 14px; }
+.sf-section h4 {
+  margin: 0 0 6px; font-size: 11px; font-weight: 600;
+  color: #556677; text-transform: uppercase; letter-spacing: 0.7px;
+}
+
+/* Rings */
+.sf-ring-list { display: flex; flex-direction: column; gap: 3px; }
+.sf-ring-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; background: rgba(15,22,34,0.4);
+  border-radius: 3px; font-size: 11px;
+}
+.sf-ring-name { color: #c0c8d4; flex: 1; }
+.sf-ring-comp { color: #6a8a9a; font-size: 10px; }
+
+/* Moons (in detail panel — clickable navigation) */
+.sf-moon-list { display: flex; flex-direction: column; gap: 3px; }
+.sf-moon-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px; background: rgba(15,22,34,0.4);
+  border-radius: 3px; font-size: 11px;
+  transition: all 0.15s;
+}
+.sf-moon-item.clickable { cursor: pointer; }
+.sf-moon-item.clickable:hover {
+  background: rgba(22,32,48,0.6);
+  border-left: 2px solid rgba(77,159,255,0.3);
+  padding-left: 6px;
+}
+.sf-moon-item.active {
+  background: rgba(77,159,255,0.06);
+  border-left: 2px solid #4d9fff;
+  padding-left: 6px;
+}
+.sf-moon-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.sf-moon-name { color: #c0c8d4; flex: 1; }
+.sf-moon-type { font-size: 10px; }
+.sf-moon-go {
+  font-size: 10px; color: #334455; transition: color 0.15s;
+}
+.sf-moon-item.clickable:hover .sf-moon-go { color: #4d9fff; }
+
+/* Science toggle & panels */
+.sf-science-toggle {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(22,32,48,0.4);
+  border: 1px solid rgba(30,48,80,0.3);
+  color: #889aaa; padding: 6px 10px;
+  border-radius: 5px; cursor: pointer;
+  font-size: 11px; width: 100%; text-align: left;
+  transition: all 0.2s;
+}
+.sf-science-toggle:hover { background: rgba(30,48,80,0.3); color: #aabbcc; }
+.sf-computing {
+  color: #4d9fff; font-size: 9px;
+  margin-left: auto; animation: pulse 1.5s infinite;
+}
+.sf-science { margin-top: 8px; }
+.sf-sci-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 8px; }
+.sf-sci-tab {
+  background: rgba(15,22,34,0.5);
+  border: 1px solid rgba(30,48,80,0.25);
+  color: #667788; padding: 4px 8px;
+  border-radius: 3px; cursor: pointer;
+  font-size: 10px; transition: all 0.15s;
+}
+.sf-sci-tab.active {
+  background: rgba(77,159,255,0.08);
+  color: #4d9fff; border-color: rgba(77,159,255,0.25);
+}
+.sf-sci-content {
+  background: rgba(10,14,23,0.6);
+  border: 1px solid rgba(30,48,80,0.2);
+  border-radius: 5px; padding: 10px;
+  max-height: 400px; overflow-y: auto;
+}
+
+/* Empty state */
+.sf-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: #334455; font-size: 14px;
+}

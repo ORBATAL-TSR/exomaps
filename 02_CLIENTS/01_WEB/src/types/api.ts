@@ -13,6 +13,19 @@ export interface StarSystemFull {
   multiplicity: number;         // 1 = single, 2 = binary, 3+ = multiple
   planet_count: number;
   confidence: 'observed' | 'inferred';
+  /** Companion linkage from curated catalog */
+  companions: CompanionBond[];
+  /** System group name (e.g. "Alpha Centauri") */
+  system_group: string | null;
+  /** Hierarchy string (e.g. "(A,B) + C") */
+  group_hierarchy: string | null;
+}
+
+/** A bond to a companion star in the same system group */
+export interface CompanionBond {
+  name: string;
+  separation_au: number;
+  bond_type: 'close_binary' | 'wide_companion';
 }
 
 export interface FullSystemsResponse {
@@ -119,4 +132,134 @@ export interface HealthResponse {
   db_status: DBStatus;
   persona: string;
   routes_count: number;
+}
+
+/* ── Planetary system detail types ─────────────────── */
+
+/** A moon orbiting a planet */
+export interface Moon {
+  moon_name: string;
+  orbital_radius_au: number;
+  mass_earth: number;
+  radius_earth: number;
+  moon_type: 'rocky' | 'icy';
+  confidence: 'observed' | 'inferred';
+}
+
+/** An individual planet (observed or inferred) */
+export interface Planet {
+  planet_name: string;
+  planet_status: string;            // 'Confirmed', 'Inferred', 'Candidate', etc.
+  mass_earth: number | null;
+  mass_source: 'true_mass' | 'mass_sini' | 'inferred' | null;
+  radius_earth: number | null;
+  semi_major_axis_au: number | null;
+  orbital_period_days: number | null;
+  eccentricity: number | null;
+  inclination_deg: number | null;
+  temp_calculated_k: number | null;
+  temp_measured_k: number | null;
+  geometric_albedo: number | null;
+  detection_type: string | null;
+  molecules: string | null;
+  discovered: string | null;
+  planet_type: 'sub-earth' | 'rocky' | 'super-earth' | 'neptune-like' | 'gas-giant' | 'super-jupiter' | 'unknown';
+  confidence: 'observed' | 'inferred';
+  moons: Moon[];
+}
+
+/** A major asteroid body within a belt */
+export interface Asteroid {
+  name: string;
+  semi_major_axis_au: number;
+  diameter_km: number;
+  spectral_class: string;           // 'C', 'S', 'M'
+  confidence: 'observed' | 'inferred';
+}
+
+/** An asteroid or debris belt */
+export interface Belt {
+  belt_id: string;
+  belt_type: 'rocky-asteroid' | 'icy-kuiper';
+  inner_radius_au: number;
+  outer_radius_au: number;
+  estimated_bodies: number;
+  confidence: 'observed' | 'inferred';
+  major_asteroids: Asteroid[];
+}
+
+/** Habitable zone bounds for a star */
+export interface HabitableZone {
+  inner_au: number;
+  outer_au: number;
+}
+
+/** Protoplanetary / debris disc around a star */
+export interface ProtoplanetaryDisc {
+  disc_type: 'protoplanetary' | 'transitional' | 'debris';
+  inner_radius_au: number;
+  outer_radius_au: number;
+  density: number;        // 0-1 relative density
+  opacity: number;        // 0-1 visual opacity hint
+  color_hint: 'warm' | 'cool';
+  confidence: 'observed' | 'inferred';
+}
+
+/** Full planetary system response from /api/system/<main_id> */
+export interface PlanetarySystemResponse {
+  star: StarSystemFull;
+  planets: Planet[];
+  belts: Belt[];
+  habitable_zone: HabitableZone;
+  protoplanetary_disc: ProtoplanetaryDisc | null;
+  summary: {
+    observed_planets: number;
+    inferred_planets: number;
+    total_planets: number;
+    total_moons: number;
+    total_belts: number;
+  };
+}
+
+/** Per-star data within a multi-star group response */
+export interface StarSystemData {
+  star: StarSystemFull;
+  planets: Planet[];
+  belts: Belt[];
+  habitable_zone: HabitableZone;
+  protoplanetary_disc: ProtoplanetaryDisc | null;
+  summary: {
+    observed_planets: number;
+    inferred_planets: number;
+    total_planets: number;
+    total_moons: number;
+    total_belts: number;
+  };
+}
+
+/** Multi-star system group response from /api/system-group/<group> */
+export interface SystemGroupResponse {
+  group_name: string;
+  hierarchy: string | null;
+  star_count: number;
+  stars: StarSystemData[];
+  group_summary: {
+    total_stars: number;
+    total_planets: number;
+    total_moons: number;
+    total_belts: number;
+  };
+}
+
+/** Planet summary per star from /api/systems/planets/summary */
+export interface PlanetSummary {
+  main_id: string;
+  observed_count: number;
+  inferred_count: number;
+  total: number;
+}
+
+export interface PlanetSummaryResponse {
+  systems: PlanetSummary[];
+  total_systems: number;
 }

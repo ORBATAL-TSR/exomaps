@@ -7,6 +7,9 @@ import type {
   RunsManifestResponse,
   ValidationResponse,
   HealthResponse,
+  PlanetarySystemResponse,
+  PlanetSummaryResponse,
+  SystemGroupResponse,
 } from '../types/api';
 
 // In development, React dev server runs on :3000, Flask API on :5000.
@@ -105,6 +108,23 @@ export async function simStep(runId: string, interval = 1) {
 
 export async function getHealth(): Promise<HealthResponse> {
   const { data } = await api.get<HealthResponse>('/health');
+  return data;
+}
+
+/* ── Planetary System Detail ────────────────────────── */
+
+export async function getSystemDetail(mainId: string): Promise<PlanetarySystemResponse> {
+  const { data } = await api.get<PlanetarySystemResponse>(`/system/${encodeURIComponent(mainId)}`);
+  return data;
+}
+
+export async function getPlanetSummary(): Promise<PlanetSummaryResponse> {
+  const { data } = await api.get<PlanetSummaryResponse>('/systems/planets/summary');
+  return data;
+}
+
+export async function getSystemGroup(groupName: string): Promise<SystemGroupResponse> {
+  const { data } = await api.get<SystemGroupResponse>(`/system-group/${encodeURIComponent(groupName)}`);
   return data;
 }
 

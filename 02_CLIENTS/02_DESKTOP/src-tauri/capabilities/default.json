@@ -1,0 +1,13 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for ExoMaps Desktop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "core:window:default",
+    "core:window:allow-set-title",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-toggle-maximize"
+  ]
+}

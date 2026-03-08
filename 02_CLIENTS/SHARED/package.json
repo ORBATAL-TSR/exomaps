@@ -1,0 +1,33 @@
+{
+  "name": "@exomaps/shared",
+  "version": "0.1.0",
+  "description": "Cross-platform shared types, API client, shaders, and utilities for ExoMaps",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./types": "./dist/types/index.js",
+    "./api": "./dist/api/index.js",
+    "./shaders": "./dist/shaders/index.js",
+    "./shaders/*": "./dist/shaders/*.js",
+    "./constants": "./dist/constants/index.js",
+    "./utils": "./dist/utils/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "files": [
+    "dist",
+    "shaders/glsl"
+  ],
+  "peerDependencies": {
+    "axios": ">=1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "axios": "^1.13.0"
+  },
+  "license": "MIT"
+}
