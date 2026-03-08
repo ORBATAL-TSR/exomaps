@@ -27,6 +27,41 @@
       "csp": null
     }
   },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "resources": [],
+    "copyright": "© 2025–2026 ExoMaps Team",
+    "category": "Game",
+    "shortDescription": "Interstellar colonization strategy game with real exoplanet data",
+    "longDescription": "ExoMaps is a science-grounded interstellar colonization strategy game built on real NASA exoplanet data. Explore star systems within 100 parsecs, design expedition fleets, establish colonies, terraform worlds, and manage interstellar logistics across realistic distances.",
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "displayLanguageSelector": false
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1"
+        ],
+        "section": "games"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "frameworks": []
+    }
+  },
   "plugins": {
     "shell": {
       "open": true

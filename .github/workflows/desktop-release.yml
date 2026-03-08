@@ -1,0 +1,153 @@
+# ─────────────────────────────────────────────────────
+# ExoMaps Desktop — Cross-platform build & release
+# ─────────────────────────────────────────────────────
+#
+# Triggers:
+#   - Push a tag like  v0.1.0  to create a GitHub Release
+#   - Manual dispatch for testing (workflow_dispatch)
+#
+# Builds:
+#   - Windows  → portable .exe (NSIS installer)
+#   - macOS    → .dmg
+#   - Linux    → .deb + .AppImage
+#
+# All artifacts are uploaded to the GitHub Release.
+
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v0.1.0-alpha)'
+        required: false
+        default: ''
+
+# Prevent concurrent builds for the same ref
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Desktop client paths (relative to repo root)
+  DESKTOP_DIR: 02_CLIENTS/02_DESKTOP
+  SHARED_DIR: 02_CLIENTS/SHARED
+
+permissions:
+  contents: write   # needed for creating releases
+
+jobs:
+  # ── Build matrix ────────────────────────────────────
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            label: macos-x64
+
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+
+    steps:
+      # ── Checkout ──
+      - uses: actions/checkout@v4
+
+      # ── Node.js (frontend build) ──
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            ${{ env.DESKTOP_DIR }}/package-lock.json
+            ${{ env.SHARED_DIR }}/package-lock.json
+
+      # ── Rust toolchain ──
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.DESKTOP_DIR }}/src-tauri -> target
+
+      # ── Linux system dependencies ──
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      # ── Install shared + desktop npm deps ──
+      - name: Install npm dependencies
+        run: |
+          cd ${{ env.SHARED_DIR }} && npm ci --ignore-scripts 2>/dev/null || npm install
+          cd ${{ github.workspace }}/${{ env.DESKTOP_DIR }} && npm ci --ignore-scripts 2>/dev/null || npm install
+
+      # ── Build & bundle with Tauri ──
+      - uses: tauri-apps/tauri-action@v0
+        id: tauri
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tauri needs these for the build
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: ${{ env.DESKTOP_DIR }}
+          tauriScript: npx tauri
+          args: --target ${{ matrix.target }}
+          # Only create release on tag push (not workflow_dispatch without tag)
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name || '' }}
+          releaseName: 'ExoMaps Desktop ${{ github.ref_type == ''tag'' && github.ref_name || inputs.tag_name || ''dev-build'' }}'
+          releaseBody: |
+            ## ExoMaps Desktop ${{ github.ref_type == 'tag' && github.ref_name || 'Development Build' }}
+
+            ### Downloads
+            | Platform | File |
+            |----------|------|
+            | Windows  | `.exe` (portable NSIS installer) |
+            | macOS    | `.dmg` |
+            | Linux    | `.deb` / `.AppImage` |
+
+            ### What's included
+            - Single-player mode with encrypted local saves (AES-256-GCM)
+            - GPU-accelerated procedural planet generation (wgpu)
+            - Offline star system cache
+            - Multiplayer mode (requires server connection)
+
+            ### System Requirements
+            - **Windows**: Windows 10+ (x64), WebView2 runtime
+            - **macOS**: macOS 10.15+ (Catalina), Apple Silicon or Intel
+            - **Linux**: Ubuntu 22.04+ or equivalent, WebKit2GTK 4.1
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+
+      # ── Upload build artifacts (for workflow_dispatch without release) ──
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exomaps-desktop-${{ matrix.label }}
+          path: |
+            ${{ env.DESKTOP_DIR }}/src-tauri/target/${{ matrix.target }}/release/bundle/**/*
+          retention-days: 7
+          if-no-files-found: warn

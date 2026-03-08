@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tauri:dev": "npx tauri dev",
+    "tauri:build": "npx tauri build",
+    "tauri:build:debug": "npx tauri build --debug"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.0",

@@ -794,6 +794,120 @@ fn compute_climate(
     simulation::climate::solve_climate(&input)
 }
 
+// ── Savegame IPC commands (single-player mode) ──────
+
+#[tauri::command]
+fn sg_create_campaign(
+    name: String,
+    seed: i64,
+    settings: serde_json::Value,
+) -> Result<String, String> {
+    cache::savegame::create_campaign(&name, seed, &settings).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_list_campaigns(status: Option<String>) -> Result<Vec<cache::savegame::SavedCampaign>, String> {
+    cache::savegame::list_campaigns(status.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_get_campaign_state(
+    campaign_id: String,
+) -> Result<Option<cache::savegame::CampaignState>, String> {
+    cache::savegame::get_campaign_state(&campaign_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_save_campaign_state(
+    campaign_id: String,
+    tick: i64,
+    state: serde_json::Value,
+) -> Result<(), String> {
+    cache::savegame::save_campaign_state(&campaign_id, tick, &state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_delete_campaign(campaign_id: String) -> Result<(), String> {
+    cache::savegame::delete_campaign(&campaign_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_explore_system(
+    campaign_id: String,
+    system_main_id: String,
+    scan_level: Option<i32>,
+    explored_by: Option<String>,
+    notes: Option<String>,
+) -> Result<cache::savegame::ExploreResult, String> {
+    cache::savegame::explore_system(
+        &campaign_id,
+        &system_main_id,
+        scan_level.unwrap_or(1),
+        explored_by.as_deref(),
+        notes.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_get_explored_systems(
+    campaign_id: String,
+) -> Result<Vec<cache::savegame::ExploredSystem>, String> {
+    cache::savegame::get_explored_systems(&campaign_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_create_faction(
+    campaign_id: String,
+    name: String,
+    color: Option<String>,
+    home_system: Option<String>,
+    initial_state: serde_json::Value,
+) -> Result<String, String> {
+    cache::savegame::create_faction(
+        &campaign_id,
+        &name,
+        color.as_deref(),
+        home_system.as_deref(),
+        &initial_state,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_list_factions(
+    campaign_id: String,
+) -> Result<Vec<cache::savegame::SavedFaction>, String> {
+    cache::savegame::list_factions(&campaign_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_save_simulation(
+    campaign_id: String,
+    tick: i64,
+    state: serde_json::Value,
+) -> Result<(), String> {
+    cache::savegame::save_simulation_state(&campaign_id, tick, &state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sg_load_simulation(
+    campaign_id: String,
+) -> Result<Option<cache::savegame::SimulationSnapshot>, String> {
+    cache::savegame::load_simulation_state(&campaign_id).map_err(|e| e.to_string())
+}
+
+/// Returns the available game mode capabilities.
+#[tauri::command]
+fn sg_get_game_mode() -> serde_json::Value {
+    serde_json::json!({
+        "singleplayer_available": true,
+        "multiplayer_available": true,
+        "savegame_encryption": "AES-256-GCM",
+        "version": env!("CARGO_PKG_VERSION"),
+    })
+}
+
 // ── Application entry ───────────────────────────────
 
 fn main() {
@@ -849,6 +963,19 @@ fn main() {
             compute_atmosphere_v2,
             compute_interior,
             compute_climate,
+            // ── Savegame (single-player) ──
+            sg_create_campaign,
+            sg_list_campaigns,
+            sg_get_campaign_state,
+            sg_save_campaign_state,
+            sg_delete_campaign,
+            sg_explore_system,
+            sg_get_explored_systems,
+            sg_create_faction,
+            sg_list_factions,
+            sg_save_simulation,
+            sg_load_simulation,
+            sg_get_game_mode,
         ])
         .setup(|app| {
             log::info!("Tauri setup complete");
@@ -873,6 +1000,11 @@ fn main() {
             // Initialize generation store
             if let Err(e) = cache::generation_store::initialize() {
                 log::warn!("Generation store init failed: {} — caching unavailable", e);
+            }
+
+            // Initialize savegame store (single-player mode)
+            if let Err(e) = cache::savegame::initialize() {
+                log::warn!("Savegame store init failed: {} — single-player unavailable", e);
             }
 
             Ok(())

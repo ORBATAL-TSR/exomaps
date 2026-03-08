@@ -18,6 +18,7 @@ import { SystemFocusView } from './components/SystemFocusView';
 import { useTauriGPU } from './hooks/useTauriGPU';
 import { useOfflineCache } from './hooks/useOfflineCache';
 import { CampaignProvider } from './hooks/useCampaign';
+import { GameModeProvider } from './hooks/useGameMode';
 
 import './App.css';
 
@@ -65,6 +66,7 @@ export default function App() {
 
   return (
     <ErrorBoundary label="App Root">
+      <GameModeProvider>
       <CampaignProvider>
       <BrowserRouter>
         <div className="desktop-app">
@@ -111,6 +113,7 @@ export default function App() {
         </div>
       </BrowserRouter>
       </CampaignProvider>
+      </GameModeProvider>
     </ErrorBoundary>
   );
 }
