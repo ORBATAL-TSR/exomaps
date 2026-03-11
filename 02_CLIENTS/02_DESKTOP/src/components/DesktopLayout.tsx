@@ -4,6 +4,11 @@
  * Fetches 1,600+ star systems from the gateway API, renders them
  * as GPU-instanced GL_POINTS in the 3D viewport with spectral-type
  * colors, twinkling, and neighborhood dimming.
+ *
+ * Data loading priority:
+ *   1. Live API  (Flask gateway on :5000 via Vite proxy)
+ *   2. Bundled   (systemsList.json — pre-computed from CSV pipeline)
+ *   3. PROC-*    (last resort procedural placeholder)
  */
 
 import { useState, useCallback, useEffect, useMemo, Suspense } from 'react';
@@ -19,6 +24,10 @@ import { SystemListPanel } from './SystemListPanel';
 import { PlanetGenCard } from './PlanetGenCard';
 import { CampaignPanel } from './CampaignPanel';
 import { useCampaign } from '../hooks/useCampaign';
+
+// Bundled star-system catalog (398 KB, 1,631 real systems from CSV pipeline).
+// Used as immediate fallback when the Flask gateway API is unreachable.
+import bundledSystems from '../data/systemsList.json';
 
 interface Props {
   gpu: TauriGPUHook;
@@ -44,22 +53,67 @@ export function DesktopLayout({ gpu, onSystemFocus }: Props) {
     if (!campaign.activeCampaign) return null;
     return new Set(campaign.exploredSystems.keys());
   }, [campaign.activeCampaign, campaign.exploredSystems]);
-  /* ── Fetch star systems on mount ─────────────── */
+  /* ── Fetch star systems on mount ──
+   * Priority: live API → bundled JSON → last-resort procedural */
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const resp = await fetch('/api/world/systems/full');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-        if (!cancelled && data?.systems) {
+        if (!cancelled && data?.systems?.length) {
+          console.info(`[DesktopLayout] Loaded ${data.systems.length} systems from API (source: ${data.source})`);
           setSystems(data.systems);
+          return;
         }
       } catch (err) {
-        console.error('[DesktopLayout] Failed to fetch systems:', err);
-      } finally {
-        if (!cancelled) setLoadingStars(false);
+        console.warn('[DesktopLayout] API unavailable:', err);
       }
-    })();
+
+      // Fallback: bundled catalog (real data from CSV pipeline)
+      if (!cancelled && bundledSystems?.length) {
+        console.info(`[DesktopLayout] Using bundled catalog: ${bundledSystems.length} real systems`);
+        setSystems(bundledSystems as StarSystem[]);
+        return;
+      }
+
+      // Last resort: procedural placeholder (should never happen now)
+      if (!cancelled) {
+        console.warn('[DesktopLayout] No data sources available, using procedural fallback');
+        const SPECTRAL = ['M', 'K', 'G', 'F', 'A', 'B'];
+        const TEFF     = [3200, 4500, 5778, 6500, 8500, 20000];
+        const LUM      = [0.04, 0.3, 1.0, 3.0, 20, 5000];
+        const proc: StarSystem[] = [];
+        const rng = (i: number, s: number) => {
+          const x = Math.sin(i * 127.1 + s * 311.7) * 43758.5453;
+          return x - Math.floor(x);
+        };
+        for (let i = 0; i < 400; i++) {
+          const d = 2 + rng(i, 0) * 48;
+          const theta = rng(i, 1) * Math.PI * 2;
+          const phi = Math.acos(1 - 2 * rng(i, 2));
+          const si = Math.floor(rng(i, 3) * 5.99);
+          proc.push({
+            main_id: `PROC-${i}`,
+            x: Math.sin(phi) * Math.cos(theta) * d * 0.3,
+            y: (rng(i, 4) - 0.5) * d * 0.15,
+            z: Math.sin(phi) * Math.sin(theta) * d * 0.3,
+            distance_ly: d,
+            spectral_class: SPECTRAL[si],
+            teff: TEFF[si] + (rng(i, 5) - 0.5) * 800,
+            luminosity: LUM[si] * (0.5 + rng(i, 6)),
+            multiplicity: rng(i, 7) > 0.7 ? 2 : 1,
+            planet_count: Math.floor(rng(i, 8) * 8),
+            confidence: 'inferred',
+            companions: [],
+            system_group: null,
+            group_hierarchy: null,
+          });
+        }
+        setSystems(proc);
+      }
+    })().finally(() => { if (!cancelled) setLoadingStars(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -115,14 +169,14 @@ export function DesktopLayout({ gpu, onSystemFocus }: Props) {
               />
             )}
 
-            <ambientLight intensity={0.08} />
+            <ambientLight intensity={0.05} />
           </Suspense>
 
           {/* Post-processing: bloom makes stars glow beautifully */}
           <EffectComposer>
             <Bloom
-              intensity={0.8}
-              luminanceThreshold={0.15}
+              intensity={1.0}
+              luminanceThreshold={0.6}
               luminanceSmoothing={0.4}
               mipmapBlur
             />

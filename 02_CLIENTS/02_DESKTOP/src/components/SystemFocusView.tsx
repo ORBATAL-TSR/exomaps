@@ -32,15 +32,18 @@
 
 import React, { useEffect, useState, useRef, Suspense, useMemo, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text } from '@react-three/drei';
+import { OrbitControls, Text, Billboard } from '@react-three/drei';
 // Bloom removed — multi-pass FBO causes flickering on Tauri wgpu/Vulkan
 import * as THREE from 'three';
 import type { TauriGPUHook, PlanetTexturesV2 } from '../hooks/useTauriGPU';
 import { useScience } from '../hooks/useScience';
 import { useCampaign } from '../hooks/useCampaign';
 import { ErrorBoundary } from './ErrorBoundary';
-import { ProceduralPlanet, V as PlanetProfiles, deriveWorldVisuals } from './ProceduralPlanet';
+import { V as PlanetProfiles, deriveWorldVisuals, ProceduralPlanet } from './ProceduralPlanet';
+// TexturedPlanet replaced by ProceduralPlanet with texture-informed coloring
 import type { TerrainParams } from './ColonyTerrain';
+import { getStarData, bvToRGB, STAR_COUNT, FIELDS_PER_STAR } from '../data/hygStarCatalog';
+import bundledSystems from '../data/systemsList.json';
 import { PlanetSurfaceV2 } from './PlanetSurfaceV2';
 import { PlanetEditorPanel } from './PlanetEditorPanel';
 import { CompositionPanel } from './CompositionPanel';
@@ -175,6 +178,34 @@ function pickMoonProfile(m: any, moonIdx: number): string {
   return rocky[Math.floor(h * rocky.length) % rocky.length];
 }
 
+/** Two-tone color for PotatoMoon vertex coloring based on moon type & profile. */
+function pickPotatoColors(_m: any, profile: string): [string, string] {
+  const POTATO_PALETTE: Record<string, [string, string]> = {
+    'moon-volcanic':        ['#b89030', '#3a1808'],  // sulfur + dark lava
+    'moon-magma-ocean':     ['#100400', '#ff5500'],  // dark crust + glowing magma
+    'moon-ice-shell':       ['#c8c0b0', '#534020'],  // cream ice + brown lineae
+    'moon-ocean':           ['#e8eaf0', '#607080'],  // white ice + blue crevasse
+    'moon-nitrogen-ice':    ['#c09888', '#3a2420'],  // pink N₂ + dark cantaloupe
+    'moon-co2-frost':       ['#b07838', '#d8d4cc'],  // ochre + CO₂ frost
+    'moon-ammonia-slush':   ['#6e6040', '#305048'],  // dirty ice + teal slush
+    'moon-cratered':        ['#706c68', '#2a2826'],  // highland grey + mare basalt
+    'moon-iron-rich':       ['#985828', '#606060'],  // rust + bare metal
+    'moon-olivine':         ['#508028', '#283010'],  // olive green + dunite
+    'moon-basalt':          ['#181614', '#0a0908'],  // dark basalt + obsidian
+    'moon-regolith':        ['#887860', '#4a3e30'],  // tan dust + dark grooves
+    'moon-captured':        ['#181410', '#0e0c0a'],  // very dark C-type
+    'moon-carbon-soot':     ['#100c0c', '#060404'],  // near-black soot
+    'moon-tholin':          ['#a04010', '#502808'],  // rust-red tholin
+    'moon-atmosphere':      ['#704818', '#382808'],  // orange-brown hydrocarbon
+    'moon-thin-atm':        ['#985828', '#503018'],  // rusty terrain
+    'moon-shepherd':        ['#a8a4a0', '#787470'],  // pale grey + medium grey
+    'moon-binary':          ['#807c78', '#884028'],  // grey ice + tholin polar
+    'moon-sulfate':         ['#f0e8a8', '#584c38'],  // bright salt + dark regolith
+    'moon-silicate-frost':  ['#8490a8', '#302418'],  // blue-grey frost + dark ancient
+  };
+  return POTATO_PALETTE[profile] || ['#776655', '#443322'];
+}
+
 const MOON_TEMP: Record<string, number> = {
   'volcanic': 350, 'ice-shell': 100, 'atmosphere-moon': 94,
   'ocean-moon': 120, 'cratered-airless': 160, 'captured-irregular': 120,
@@ -233,6 +264,28 @@ function shortName(name: string | undefined, idx: number): string {
   return name.split(' ').pop()?.replace('(inferred)', '').trim() || String.fromCharCode(98 + idx);
 }
 
+/* ---------- Shared radial-glow texture (soft circle, no hard square edges) ---------- */
+let _glowTex: THREE.Texture | null = null;
+function getGlowTexture(): THREE.Texture {
+  if (_glowTex) return _glowTex;
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,1.0)');
+  grad.addColorStop(0.15, 'rgba(255,255,255,0.6)');
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.15)');
+  grad.addColorStop(0.7, 'rgba(255,255,255,0.03)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  _glowTex = new THREE.CanvasTexture(canvas);
+  _glowTex.needsUpdate = true;
+  return _glowTex;
+}
+
 /**
  * Keplerian-scaled visual period.
  * Outer bodies orbit noticeably slower than inner ones.
@@ -244,6 +297,9 @@ function vizPeriod(periodDays: number, minPeriodDays: number): number {
 }
 
 const STAR_VIS_R = 0.22;
+/** Luminosity-scaled star visual radius for the orrery */
+const starVisRadius = (luminosity: number) =>
+  Math.max(0.22, Math.min(0.85, 0.24 + Math.pow(luminosity, 0.30) * 0.20));
 
 /**
  * Logarithmic orbit scaling for system depth.
@@ -278,19 +334,19 @@ function layoutMoonOrbits(
   })).sort((a, b) => a.au - b.au);
 
   const maxMoonRad = Math.max(...sorted.map(s => s.re));
-  const gap = 0.06; // minimum visual gap between moons
+  const gap = 0.18; // generous visual gap so moons never intersect
 
   // Initial logarithmic positions
   const k = 6 / Math.max(maxAU, 0.0001);
-  const spread = 1.4;
+  const spread = 2.0;
   const positions: number[] = [];
   for (const s of sorted) {
-    const vizR = 0.04 + (s.re / maxMoonRad) * 0.30;
+    const vizR = 0.02 + (s.re / maxMoonRad) * 0.14;
     const logPos = minR + Math.log2(1 + s.au * k) * spread;
     if (positions.length === 0) {
       positions.push(Math.max(logPos, minR + vizR + gap));
     } else {
-      const prevVizR = 0.04 + (sorted[positions.length - 1].re / maxMoonRad) * 0.30;
+      const prevVizR = 0.02 + (sorted[positions.length - 1].re / maxMoonRad) * 0.14;
       const minSep = prevVizR + vizR + gap;
       positions.push(Math.max(logPos, positions[positions.length - 1] + minSep));
     }
@@ -370,6 +426,20 @@ function moonColorShift(m: any, mi: number): [number, number, number] {
   return [clamp(dr), clamp(dg), clamp(db)];
 }
 
+/** Derive planetshine color from parent planet type — reflected light tinting nearby moons */
+function planetShineFromType(pType: string | undefined): [number, number, number] {
+  if (!pType) return [0, 0, 0];
+  const t = pType.toLowerCase();
+  if (t.includes('neptune') || t.includes('ice-giant'))     return [0.25, 0.45, 0.75];
+  if (t.includes('jupiter') || t.includes('gas-giant'))      return [0.60, 0.42, 0.22];
+  if (t.includes('gas-saturn') || t.includes('saturn'))      return [0.55, 0.48, 0.28];
+  if (t.includes('gas-hot') || t.includes('hot-jupiter'))    return [0.70, 0.35, 0.15];
+  if (t.includes('super-earth') || t.includes('ocean'))      return [0.15, 0.30, 0.50];
+  if (t.includes('rocky') || t.includes('terrestrial'))      return [0.30, 0.25, 0.20];
+  if (t.includes('ice'))                                      return [0.40, 0.50, 0.60];
+  return [0.20, 0.20, 0.20]; // neutral default
+}
+
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    3D Sub-Components
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
@@ -407,13 +477,28 @@ function OrreryBody({
 }) {
   const grp = useRef<THREE.Group>(null!);
   const glow = useRef<THREE.Mesh>(null!);
+  // Dynamic sun direction: planet → star (star is at origin)
+  const [sunDir, setSunDir] = useState<[number,number,number]>([-1, 0, 0]);
 
   useFrame(({ clock }) => {
     const t = _orbit.time;
     const a = startAngle + (t * Math.PI * 2) / Math.max(vizPrd, 2);
     if (grp.current) {
-      grp.current.position.x = Math.cos(a) * orbitR;
-      grp.current.position.z = Math.sin(a) * orbitR;
+      const px = Math.cos(a) * orbitR;
+      const pz = Math.sin(a) * orbitR;
+      grp.current.position.x = px;
+      grp.current.position.z = pz;
+      // Sun direction: from planet position toward star at origin
+      const len = Math.sqrt(px * px + pz * pz) || 1;
+      const sdx = -px / len;
+      const sdz = -pz / len;
+      // Only update state if direction shifted significantly (avoid re-renders)
+      setSunDir(prev => {
+        if (Math.abs(prev[0] - sdx) > 0.01 || Math.abs(prev[2] - sdz) > 0.01) {
+          return [sdx, 0.05, sdz];
+        }
+        return prev;
+      });
     }
     if (glow.current && active) {
       (glow.current.material as THREE.MeshBasicMaterial).opacity =
@@ -431,7 +516,7 @@ function OrreryBody({
             planetType={planetType}
             temperature={temperature ?? 288}
             seed={planetSeed ?? 0}
-            sunDirection={[1, 0.3, 0.5]}
+            sunDirection={sunDir}
             rotationSpeed={0.06}
             mass={mass}
             starSpectralClass={starSpectralClass}
@@ -457,20 +542,80 @@ function OrreryBody({
         </mesh>
       )}
 
-      {/* Rings (system depth only — planet depth renders separately) */}
-      {ringSystem?.rings?.map((ring: any, ri: number) => (
-        <mesh key={ri} rotation={[-Math.PI / 2, 0, 0]}>
+      {/* [21] Rings — custom shader with radial bands, gaps, forward-scatter */}
+      {ringSystem?.rings?.map((ring: any, ri: number) => {
+        const tiltAngle = Math.sin((planetSeed ?? 0) * 47.3) * 0.18;
+        const baseCol = ring.composition === 'icy' ? '#aabbdd' :
+              ring.composition === 'mixed' ? '#99aa88' : '#887755';
+        return (
+        <mesh key={ri} rotation={[-Math.PI / 2 + tiltAngle, 0, 0]}>
           <ringGeometry args={[
             ring.inner_radius_re * ringScale * 0.08,
-            ring.outer_radius_re * ringScale * 0.08, 48
+            ring.outer_radius_re * ringScale * 0.08, 128
           ]} />
-          <meshBasicMaterial
-            color={ring.composition === 'icy' ? '#aabbdd' :
-              ring.composition === 'mixed' ? '#99aa88' : '#887755'}
-            transparent opacity={Math.min(ring.optical_depth * 0.3, 0.45)}
-            side={THREE.DoubleSide} depthWrite={false} />
+          <shaderMaterial
+            transparent
+            side={THREE.DoubleSide}
+            depthWrite={false}
+            uniforms={{
+              uColor: { value: new THREE.Color(baseCol) },
+              uOpticalDepth: { value: ring.optical_depth ?? 0.5 },
+              uSeed: { value: (planetSeed ?? 0) * 13.7 + ri * 7.3 },
+            }}
+            vertexShader={`
+              varying vec2 vUv;
+              void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              }
+            `}
+            fragmentShader={`
+              uniform vec3 uColor;
+              uniform float uOpticalDepth;
+              uniform float uSeed;
+              varying vec2 vUv;
+
+              float hash(float n) { return fract(sin(n) * 43758.5453); }
+
+              void main() {
+                // Radial position 0→1 from inner to outer edge
+                float r = vUv.x;
+
+                // Radial band structure — multiple concentric ringlets
+                float bands = 0.0;
+                bands += sin(r * 80.0 + uSeed) * 0.15;
+                bands += sin(r * 140.0 + uSeed * 2.3) * 0.08;
+                bands += sin(r * 220.0 + uSeed * 4.1) * 0.05;
+
+                // Cassini-like division gaps at specific radial positions
+                float gap1 = 1.0 - smoothstep(0.0, 0.02, abs(r - 0.38 - hash(uSeed) * 0.08));
+                float gap2 = 1.0 - smoothstep(0.0, 0.015, abs(r - 0.62 - hash(uSeed+1.0) * 0.06));
+                float gap3 = 1.0 - smoothstep(0.0, 0.008, abs(r - 0.85 - hash(uSeed+2.0) * 0.04));
+                float gapMask = (1.0 - gap1 * 0.9) * (1.0 - gap2 * 0.7) * (1.0 - gap3 * 0.5);
+
+                // Optical depth varies radially — denser in middle, thinner at edges
+                float radialDensity = smoothstep(0.0, 0.12, r) * smoothstep(1.0, 0.88, r);
+                radialDensity *= 0.7 + 0.3 * (1.0 + bands);
+
+                // Color variation — slight hue shift across radius
+                vec3 col = uColor;
+                col = mix(col, uColor * 1.15, bands * 0.5 + 0.5);
+                col = mix(col, uColor * 0.6, smoothstep(0.85, 1.0, r) * 0.3);
+
+                float alpha = radialDensity * gapMask * uOpticalDepth * 0.45;
+                alpha = clamp(alpha, 0.0, 0.28);
+
+                // Softer inner/outer edges
+                alpha *= smoothstep(0.0, 0.08, r) * smoothstep(1.0, 0.92, r);
+
+                // Reduce color multiplier for less bloom
+                gl_FragColor = vec4(col * 0.85, alpha);
+              }
+            `}
+          />
         </mesh>
-      ))}
+        );
+      })}
 
       {/* Mini moon hints at system depth */}
       {moonHints?.slice(0, 6).map((m, mi) => (
@@ -482,42 +627,131 @@ function OrreryBody({
           startAngle={mi * 2.1} />
       ))}
 
-      <Text position={[0, r + 0.18, 0]} fontSize={0.12}
-        color={active ? '#c0d8ff' : '#7899bb'}
-        fillOpacity={active ? 1 : 0.65}
-        anchorX="center" anchorY="bottom">
-        {label}
-      </Text>
+      <Billboard>
+        <Text position={[0, r + 0.18, 0]} fontSize={0.12}
+          color={active ? '#c0d8ff' : '#7899bb'}
+          fillOpacity={active ? 1 : 0.65}
+          anchorX="center" anchorY="bottom">
+          {label}
+        </Text>
+      </Billboard>
     </group>
   );
 }
 
-/** Irregular "potato" geometry for tiny asteroid-like moons (Phobos, Deimos, Hyperion) */
-function PotatoMoon({ seed, color, roughness = 0.92, detail = 3 }: {
-  seed: number; color: string; roughness?: number; detail?: number;
+/**
+ * Irregular "potato" geometry for tiny moons with multiple deformation styles.
+ *
+ * Styles:
+ *   generic  — Phobos/Deimos: lumpy, elongated, boring
+ *   miranda  — Extreme coronae (concentric ridged ovoids), chevron grooves, 20km cliffs
+ *   hyperion — Spongy deeply-pitted (sublimation erosion), lowest density
+ *   eros     — Highly elongated peanut/saddle shape (contact binary feel)
+ *
+ * Vertex colors give multi-toned surface (highland/lowland) instead of flat single color.
+ */
+function PotatoMoon({ seed, color, color2, roughness = 0.92, detail = 4, deformStyle = 'generic' }: {
+  seed: number; color: string; color2?: string; roughness?: number; detail?: number;
+  deformStyle?: 'generic' | 'miranda' | 'hyperion' | 'eros';
 }) {
   const geo = useMemo(() => {
     const g = new THREE.IcosahedronGeometry(1, detail);
     const pos = g.attributes.position;
     const s = seed * 137;
+    const S = Math.sin, C = Math.cos;
+
+    // Parse colors for vertex coloring
+    const c1 = new THREE.Color(color);
+    const c2t = new THREE.Color(color2 || color);
+    const colors = new Float32Array(pos.count * 3);
+
     for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      // Low-frequency deformation for overall shape
-      const n1 = Math.sin(x * 2.1 + s) * Math.cos(y * 3.2 + s * 0.7) * Math.sin(z * 1.8 + s * 1.3);
-      // Medium frequency for lumps (reduced from 0.3 to 0.2 — less spiky)
-      const n2 = Math.sin(x * 5.3 + s * 2) * Math.cos(y * 4.1 + s * 1.5) * 0.2;
-      // High frequency for rough surface (reduced from 0.08 to 0.04 — smoother)
-      const n3 = Math.sin(x * 12 + y * 8 + z * 10 + s * 3) * 0.04;
-      const scale = 0.65 + n1 * 0.25 + n2 + n3;
-      pos.setXYZ(i, x * scale, y * Math.max(0.4, scale * 0.85), z * scale);
+      let x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const r = Math.sqrt(x * x + y * y + z * z) || 1;
+      const nx = x / r, ny = y / r, nz = z / r;
+      let scale = 1.0;
+      let colorT = 0.5; // 0 = color1, 1 = color2
+
+      if (deformStyle === 'miranda') {
+        // ── Miranda: extreme asymmetric terrain ──
+        // Large-scale coronae: 2-3 huge concentric ridged ovoid features
+        const corona1 = S(nx * 1.6 + s * 0.3) * C(nz * 2.1 + s * 0.5);
+        const corona2 = S(ny * 1.8 + s * 0.7) * C(nx * 1.4 + s * 1.1);
+        const coronaRidge = Math.abs(S(corona1 * 3.14)) * 0.18 + Math.abs(S(corona2 * 2.8)) * 0.14;
+        // Chevron terrain: sharp V-shaped grooves
+        const chevron = Math.abs(S((nx + nz) * 4.2 + s)) * C(ny * 3.5 + s * 0.8) * 0.12;
+        // Massive cliff scarps (up to 20km on 235km body = ~8.5% radius)
+        const cliff = Math.max(0, S(nx * 2.5 + ny * 1.3 + s * 0.4)) *
+                       (1.0 - Math.abs(S(nz * 6 + s * 2))) * 0.20;
+        // Extreme overall asymmetry — one hemisphere much higher than the other
+        const hemisphereWarp = S(nx * 0.8 + s * 0.2) * 0.15;
+        // High frequency rough cratered surface
+        const rough = S(x * 14 + y * 11 + z * 9 + s * 3) * 0.03;
+        scale = 0.55 + coronaRidge + chevron + cliff + hemisphereWarp + rough;
+        // Color: bright fresh ice on corona ridges, dark ancient terrain in lows
+        colorT = Math.min(1, Math.max(0, coronaRidge * 3.0 + cliff * 2.0));
+
+      } else if (deformStyle === 'hyperion') {
+        // ── Hyperion: spongy deeply pitted ──
+        // Many deep roughly-spherical pits (sublimation erosion)
+        let pits = 0;
+        for (let p = 0; p < 5; p++) {
+          const px = S(s + p * 47) * 0.8, py = C(s + p * 71) * 0.8, pz = S(s + p * 31) * 0.8;
+          const d = Math.sqrt((nx - px) ** 2 + (ny - py) ** 2 + (nz - pz) ** 2);
+          const pitR = 0.25 + S(s + p * 17) * 0.12;
+          if (d < pitR) pits += (pitR - d) / pitR * 0.35;
+        }
+        // Overall irregular shape
+        const n1 = S(x * 2.3 + s) * C(y * 2.8 + s * 0.6) * 0.18;
+        // Surface texture
+        const n2 = S(x * 8 + y * 6 + z * 7 + s * 2) * 0.04;
+        scale = 0.70 + n1 + n2 - pits;
+        colorT = pits * 2.0; // darker inside pits
+
+      } else if (deformStyle === 'eros') {
+        // ── Eros: highly elongated peanut/saddle ──
+        // Strong elongation along seed-rotated axis
+        const ax = S(s * 0.3), az = C(s * 0.3);
+        const along = nx * ax + nz * az; // projection onto elongation axis
+        // Saddle: pinched in the middle
+        const saddle = 1.0 - 0.30 * (1.0 - along * along);
+        // Elongation
+        const elong = 1.0 + 0.40 * along * along;
+        const n1 = S(x * 4.2 + s) * C(y * 3.8 + s * 0.7) * 0.10;
+        const rough = S(x * 11 + y * 9 + z * 10 + s * 3) * 0.03;
+        scale = 0.55 * saddle * elong + n1 + rough;
+        colorT = Math.max(0, Math.min(1, 0.5 + n1 * 3.0));
+
+      } else {
+        // ── Generic: Phobos/Deimos lumpy potato ──
+        const n1 = S(x * 2.1 + s) * C(y * 3.2 + s * 0.7) * S(z * 1.8 + s * 1.3);
+        const n2 = S(x * 5.3 + s * 2) * C(y * 4.1 + s * 1.5) * 0.2;
+        const n3 = S(x * 12 + y * 8 + z * 10 + s * 3) * 0.04;
+        scale = 0.65 + n1 * 0.25 + n2 + n3;
+        colorT = Math.max(0, Math.min(1, 0.5 + n1 + n2 * 0.5));
+      }
+
+      scale = Math.max(0.25, scale); // prevent collapse
+      pos.setXYZ(i, nx * scale, ny * scale, nz * scale);
+
+      // Vertex color: blend between two surface tones
+      const ct = Math.max(0, Math.min(1, colorT));
+      colors[i * 3 + 0] = c1.r * (1 - ct) + c2t.r * ct;
+      colors[i * 3 + 1] = c1.g * (1 - ct) + c2t.g * ct;
+      colors[i * 3 + 2] = c1.b * (1 - ct) + c2t.b * ct;
     }
+
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     pos.needsUpdate = true;
     g.computeVertexNormals();
     return g;
-  }, [seed, detail]);
+  }, [seed, detail, deformStyle, color, color2]);
+
   return (
     <mesh geometry={geo}>
-      <meshStandardMaterial color={color} roughness={roughness} metalness={0.05} />
+      <meshStandardMaterial
+        vertexColors roughness={roughness} metalness={0.05}
+      />
     </mesh>
   );
 }
@@ -526,17 +760,20 @@ function PotatoMoon({ seed, color, roughness = 0.92, detail = 3 }: {
 function OrbitingMoon({
   orbitR, r, vizPrd, startAngle, active, onClick, label,
   planetType, temperature, seed, colorShift,
-  mass, tidalHeating, isPotato, potatoColor, starSpectralClass,
-  hasAtmosphere, atmColor,
+  mass, tidalHeating, isPotato, potatoColor, potatoColor2, potatoDeform,
+  starSpectralClass,
+  hasAtmosphere, atmColor, planetShineColor,
 }: {
   orbitR: number; r: number; vizPrd: number; startAngle: number;
   active: boolean; onClick: () => void; label: string;
   planetType: string; temperature: number; seed: number;
   colorShift: [number, number, number];
   mass?: number; tidalHeating?: number;
-  isPotato?: boolean; potatoColor?: string;
+  isPotato?: boolean; potatoColor?: string; potatoColor2?: string;
+  potatoDeform?: 'generic' | 'miranda' | 'hyperion' | 'eros';
   starSpectralClass?: string;
   hasAtmosphere?: boolean; atmColor?: string;
+  planetShineColor?: [number, number, number];
 }) {
   const grp = useRef<THREE.Group>(null!);
   const glow = useRef<THREE.Mesh>(null!);
@@ -558,7 +795,8 @@ function OrbitingMoon({
     <group ref={grp} onClick={e => { e.stopPropagation(); onClick(); }}>
       <group scale={[r, r, r]}>
         {isPotato ? (
-          <PotatoMoon seed={seed} color={potatoColor || '#887766'} />
+          <PotatoMoon seed={seed} color={potatoColor || '#887766'}
+            color2={potatoColor2} deformStyle={potatoDeform || 'generic'} />
         ) : (
           <ProceduralPlanet
             planetType={planetType}
@@ -570,6 +808,7 @@ function OrbitingMoon({
             mass={mass}
             tidalHeating={tidalHeating}
             starSpectralClass={starSpectralClass}
+            planetShineColor={planetShineColor}
           />
         )}
         {/* Atmosphere haze for moons like Titan */}
@@ -592,53 +831,433 @@ function OrbitingMoon({
             depthWrite={false} blending={THREE.AdditiveBlending} />
         </mesh>
       )}
-      <Text position={[0, r + 0.12, 0]} fontSize={0.08}
-        color={active ? '#c0d8ff' : '#7899bb'}
-        fillOpacity={active ? 1 : 0.55}
-        anchorX="center" anchorY="bottom">
-        {label}
-      </Text>
+      <Billboard>
+        <Text position={[0, r + 0.12, 0]} fontSize={0.08}
+          color={active ? '#c0d8ff' : '#7899bb'}
+          fillOpacity={active ? 1 : 0.55}
+          anchorX="center" anchorY="bottom">
+          {label}
+        </Text>
+      </Billboard>
     </group>
   );
 }
 
-function OrreryStar({ color, size }: { color: string; size: number }) {
-  const glowRef = useRef<THREE.Mesh>(null!);
-  const coronaRef = useRef<THREE.Mesh>(null!);
-  useFrame(({ clock }) => {
+/* ---- Star surface shader with solar granulation, limb darkening, sunspots ---- */
+const STAR_VERT = `
+varying vec3 vNormal;
+varying vec3 vPosition;
+varying vec2 vUv;
+void main() {
+  // World-space normal so NdotV is consistent with world-space cameraPosition
+  vNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
+  vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const STAR_FRAG = `
+uniform float uTime;
+uniform vec3 uColor;
+uniform vec3 uHotColor;
+uniform float uGranScale;
+varying vec3 vNormal;
+varying vec3 vPosition;
+varying vec2 vUv;
+
+// ---- Hash functions ----
+float hash31(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+vec3 hash33(vec3 p) {
+  p = vec3(dot(p, vec3(127.1, 311.7, 74.7)),
+           dot(p, vec3(269.5, 183.3, 246.1)),
+           dot(p, vec3(113.5, 271.9, 124.6)));
+  return fract(sin(p) * 43758.5453);
+}
+
+// ---- Animated 3D Voronoi convection ----
+// Returns vec3(dist_to_center, edge_proximity, cell_id)
+vec3 voronoiCell(vec3 p, float speed) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  float d1 = 100.0, d2 = 100.0;
+  float id = 0.0;
+  for (int x = -1; x <= 1; x++)
+  for (int y = -1; y <= 1; y++)
+  for (int z = -1; z <= 1; z++) {
+    vec3 nb = vec3(float(x), float(y), float(z));
+    vec3 cell = i + nb;
+    vec3 pt = hash33(cell);
+    // Each point orbits its home — creates boiling/convection motion
+    pt = 0.5 + 0.4 * sin(uTime * speed + 6.2831 * pt);
+    vec3 diff = nb + pt - f;
+    float d = dot(diff, diff);
+    if (d < d1) { d2 = d1; d1 = d; id = hash31(cell); }
+    else if (d < d2) { d2 = d; }
+  }
+  d1 = sqrt(d1);
+  d2 = sqrt(d2);
+  return vec3(d1, d2 - d1, id);
+}
+
+// ---- Value noise for plasma turbulence ----
+float vnoise(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  return mix(
+    mix(mix(hash31(i), hash31(i + vec3(1,0,0)), f.x),
+        mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
+        mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+
+void main() {
+  vec3 N = normalize(vNormal);
+  vec3 V = normalize(cameraPosition - vPosition);
+  float NdotV = max(dot(N, V), 0.0);
+  vec3 sp = normalize(vPosition);
+
+  // Differential rotation: equator rotates faster than poles
+  float lat = asin(clamp(sp.y, -1.0, 1.0));
+  float rotRate = uTime * 0.02 * (1.0 - 0.4 * lat * lat);
+  float cs = cos(rotRate), sn = sin(rotRate);
+  sp = vec3(sp.x * cs - sp.z * sn, sp.y, sp.x * sn + sp.z * cs);
+
+  // ===== ANIMATED VORONOI CONVECTION CELLS =====
+
+  // Large supergranulation — slow-evolving mega-cells
+  vec3 v1 = voronoiCell(sp * 3.5, 0.05);
+  float superLane = 1.0 - smoothstep(0.02, 0.12, v1.y);
+  float superVar = 0.88 + 0.12 * v1.z;
+
+  // Main granulation — the visible bubbling convection pattern
+  vec3 v2 = voronoiCell(sp * uGranScale, 0.10);
+  float granLane = 1.0 - smoothstep(0.015, 0.08, v2.y);
+  float granCenter = smoothstep(0.45, 0.05, v2.x);
+  float granVar = 0.85 + 0.15 * v2.z;
+
+  // Fine mesogranulation — fast tiny bubbles
+  vec3 v3 = voronoiCell(sp * uGranScale * 2.8, 0.18);
+  float fineLane = 1.0 - smoothstep(0.01, 0.05, v3.y);
+
+  // Combine: dark intergranule lanes + bright cell centers
+  float lanes = 1.0 - granLane * 0.35 - superLane * 0.12 - fineLane * 0.08;
+  float cellGlow = granCenter * 0.22 * granVar;
+  float cellBright = clamp(lanes * superVar + cellGlow, 0.0, 1.0);
+
+  // Fine plasma turbulence overlay
+  float turb = vnoise(sp * 28.0 + uTime * 0.06) * 0.05;
+  cellBright += turb;
+
+  // ===== LIMB DARKENING =====
+  float limbBase = 0.35 + 0.65 * pow(NdotV, 0.40);
+  vec3 limbTint = vec3(pow(NdotV, 0.28), pow(NdotV, 0.36), pow(NdotV, 0.52));
+
+  // ===== SUNSPOTS (Voronoi-based, sparse) =====
+  vec3 vSpot = voronoiCell(sp * 5.0 + vec3(uTime * 0.002, 0.0, 0.0), 0.025);
+  float isSpot = step(0.88, vSpot.z);
+  float spotDark = 1.0 - isSpot * smoothstep(0.28, 0.0, vSpot.x) * 0.70;
+  float latFade = smoothstep(0.55, 0.28, abs(sp.y));
+  spotDark = mix(1.0, spotDark, latFade * smoothstep(0.0, 0.25, NdotV));
+
+  // ===== COLOR COMPOSITION =====
+  vec3 surfCol = mix(uColor * 0.82, uHotColor, cellBright * 0.55);
+  surfCol *= spotDark;
+  surfCol *= limbBase * limbTint;
+
+  // Subtle pulsation
+  surfCol *= 1.0 + 0.015 * sin(uTime * 1.8) + 0.008 * sin(uTime * 3.3);
+
+  // HDR for bloom
+  float hdrBoost = 1.3 + 1.0 * pow(NdotV, 0.6);
+  surfCol *= hdrBoost;
+
+  gl_FragColor = vec4(surfCol, 1.0);
+}`;
+
+/* ---- Corona shell shader (volumetric radial glow with streamer rays) ---- */
+const CORONA_FRAG = `
+uniform float uTime;
+uniform vec3 uColor;
+uniform vec3 uCamPos;
+varying vec3 vNormal;
+varying vec3 vPosition;
+varying vec2 vUv;
+
+float chash(float n) { return fract(sin(n) * 43758.5453); }
+
+void main() {
+  vec3 N = normalize(vNormal);
+  vec3 V = normalize(uCamPos - vPosition);
+  float NdotV = abs(dot(N, V));
+  float edge = 1.0 - NdotV;
+
+  // Multi-power edge glow (inner bright + extended faint)
+  float glowInner = pow(edge, 2.0) * 0.6;
+  float glowOuter = pow(edge, 5.0) * 1.2;
+  float glow = glowInner + glowOuter;
+
+  // Streamer rays: multi-freq angular noise with smooth blending
+  float angle = atan(N.y, N.x);
+  float rayNoise = 0.0;
+  float totalA = 0.0;
+  for(float i=1.0; i<7.0; i+=1.0){
+    float freq = i*2.0 + chash(i*3.7)*2.0; // non-uniform frequencies
+    float speed = 0.06 + i*0.03;
+    float amp = 1.0/i;
+    rayNoise += sin(angle*freq + uTime*speed + chash(i)*6.28) * amp;
+    totalA += amp;
+  }
+  rayNoise = rayNoise/totalA * 0.5 + 0.5;
+
+  // Pulsing streamers
+  float streamPulse = 0.85 + 0.15*sin(uTime*0.5 + angle*1.5);
+
+  float corona = glow * (0.5 + 0.6 * rayNoise) * streamPulse;
+
+  // Color: hot white inside, star color outside — spectral-type-aware corona
+  // Cool stars keep warmer corona; hot stars get blue-white tips
+  vec3 col = mix(vec3(1.0,0.98,0.95), uColor, edge*0.65);
+  float hotFrac = dot(uColor, vec3(0.15, 0.30, 0.55)); // how blue the star is
+  vec3 tipColor = mix(uColor * 1.2, vec3(0.85,0.90,1.0), hotFrac);
+  col = mix(col, tipColor, pow(edge,4.0)*0.3);
+
+  float flicker = 1.0 + 0.04*sin(uTime*3.5 + angle*2.0);
+  gl_FragColor = vec4(col * corona * flicker * 1.0, corona * 0.30);
+}`;
+
+function OrreryStar({ color, size, teff }: { color: string; size: number; teff?: number }) {
+  const matRef = useRef<THREE.ShaderMaterial>(null!);
+  const coronaRef = useRef<THREE.ShaderMaterial>(null!);
+  const glowRef = useRef<THREE.Group>(null!);
+
+  const starCol = useMemo(() => new THREE.Color(color), [color]);
+  const hotCol = useMemo(() => {
+    const c = new THREE.Color(color);
+    const t = teff ?? 5778;
+    const whiteTarget = t > 7500 ? '#e8eeff' : t > 5500 ? '#fffbe8' : t > 4000 ? '#ffe8c0' : '#ffd0a0';
+    const whiteFrac = t > 7500 ? 0.7 : t > 5500 ? 0.6 : t > 4000 ? 0.4 : 0.25;
+    c.lerp(new THREE.Color(whiteTarget), whiteFrac);
+    return c;
+  }, [color, teff]);
+
+  const granScale = useMemo(() => {
+    const t = teff ?? 5778;
+    if (t > 8000) return 16.0;  // hot: small, faint cells
+    if (t > 6000) return 12.0;  // F/G: moderate cells
+    if (t > 4500) return 9.0;   // K: large, visible cells
+    return 7.0;                  // M: huge convection cells
+  }, [teff]);
+
+  const starUniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: starCol },
+    uHotColor: { value: hotCol },
+    uGranScale: { value: granScale },
+  }), [starCol, hotCol, granScale]);
+
+  const coronaUniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: starCol },
+    uCamPos: { value: new THREE.Vector3() },
+  }), [starCol]);
+
+  useFrame(({ clock, camera }) => {
     const t = clock.getElapsedTime();
-    if (glowRef.current)
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity =
-        0.12 + 0.06 * Math.sin(t * 1.2);
-    if (coronaRef.current)
-      (coronaRef.current.material as THREE.MeshBasicMaterial).opacity =
-        0.04 + 0.02 * Math.sin(t * 0.7 + 1.5);
+    if (matRef.current) matRef.current.uniforms.uTime.value = t;
+    if (coronaRef.current) {
+      coronaRef.current.uniforms.uTime.value = t;
+      coronaRef.current.uniforms.uCamPos.value.copy(camera.position);
+    }
+    // Single glow billboard faces camera
+    if (glowRef.current) glowRef.current.quaternion.copy(camera.quaternion);
   });
+
   return (
     <group>
-      {/* Core */}
+      {/* Core sphere — Voronoi convection cells + limb darkening + HDR */}
       <mesh>
-        <sphereGeometry args={[size, 32, 32]} />
-        <meshBasicMaterial color={color} />
+        <sphereGeometry args={[size, 64, 64]} />
+        <shaderMaterial ref={matRef}
+          vertexShader={STAR_VERT}
+          fragmentShader={STAR_FRAG}
+          uniforms={starUniforms} />
       </mesh>
-      {/* Inner glow */}
-      <mesh ref={glowRef}>
-        <sphereGeometry args={[size * 2.0, 32, 32]} />
-        <meshBasicMaterial color={color} transparent opacity={0.12}
+
+      {/* Corona shell — thin edge glow with streamers */}
+      <mesh>
+        <sphereGeometry args={[size * 1.20, 64, 64]} />
+        <shaderMaterial ref={coronaRef}
+          vertexShader={STAR_VERT}
+          fragmentShader={CORONA_FRAG}
+          uniforms={coronaUniforms}
+          transparent side={THREE.BackSide}
           depthWrite={false} blending={THREE.AdditiveBlending} />
       </mesh>
-      {/* Outer corona halo */}
-      <mesh ref={coronaRef}>
-        <sphereGeometry args={[size * 3.5, 32, 32]} />
-        <meshBasicMaterial color={color} transparent opacity={0.04}
-          depthWrite={false} blending={THREE.AdditiveBlending} />
-      </mesh>
-      {/* Equatorial disc */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[size * 1.05, size * 1.3, 48]} />
-        <meshBasicMaterial color={color} transparent opacity={0.04}
-          side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
-      </mesh>
+
+      {/* Single soft glow billboard — bloom does the rest */}
+      <group ref={glowRef}>
+        <mesh>
+          <planeGeometry args={[size * 3.5, size * 3.5]} />
+          <shaderMaterial
+            transparent
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            uniforms={{ uColor: { value: starCol } }}
+            vertexShader={`
+              varying vec2 vUv;
+              void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              }
+            `}
+            fragmentShader={`
+              uniform vec3 uColor;
+              varying vec2 vUv;
+              void main() {
+                vec2 c = vUv - 0.5;
+                float r = length(c) * 2.0;
+                // Smooth analytic falloff — no hard edges, no visible boundary
+                float glow = exp(-r * r * 3.0) * 0.35;
+                glow += exp(-r * 4.0) * 0.15; // extended faint halo
+                vec3 col = mix(vec3(1.0, 0.99, 0.96), uColor, r * 0.6);
+                gl_FragColor = vec4(col * glow, glow);
+              }
+            `}
+          />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+/** Distant parent star visible from planet/moon depth — bright disc with animated convection */
+function DistantStar({ color, direction, luminosity = 1 }: { color: string; direction: [number, number, number]; luminosity?: number }) {
+  const ref = useRef<THREE.Group>(null!);
+  const discRef = useRef<THREE.ShaderMaterial>(null!);
+
+  const lumScale = Math.max(0.5, Math.min(3.0, Math.pow(luminosity, 0.30)));
+  const coreSize = 1.8 * lumScale;
+  const glowSize = 4.0 * lumScale;
+
+  const dir = useMemo(() => {
+    const v = new THREE.Vector3(...direction).normalize();
+    return v.multiplyScalar(45);
+  }, [direction]);
+
+  const starCol = useMemo(() => new THREE.Color(color), [color]);
+
+  const discUniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: starCol },
+  }), [starCol]);
+
+  useFrame(({ camera, clock }) => {
+    if (!ref.current) return;
+    ref.current.quaternion.copy(camera.quaternion);
+    if (discRef.current) discRef.current.uniforms.uTime.value = clock.getElapsedTime();
+  });
+
+  return (
+    <group position={[dir.x, dir.y, dir.z]}>
+      <group ref={ref}>
+        {/* Solar disc with animated 2D Voronoi convection */}
+        <mesh>
+          <planeGeometry args={[coreSize * 1.4, coreSize * 1.4]} />
+          <shaderMaterial ref={discRef}
+            transparent
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            uniforms={discUniforms}
+            vertexShader={`
+              varying vec2 vUv;
+              void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              }
+            `}
+            fragmentShader={`
+              uniform float uTime;
+              uniform vec3 uColor;
+              varying vec2 vUv;
+
+              vec2 hash22(vec2 p) {
+                p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+                return fract(sin(p) * 43758.5453);
+              }
+              float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+              // 2D animated Voronoi → (dist, edge, cellId)
+              vec3 voronoi2(vec2 p, float speed) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                float d1 = 100.0, d2 = 100.0;
+                float id = 0.0;
+                for (int x = -1; x <= 1; x++)
+                for (int y = -1; y <= 1; y++) {
+                  vec2 nb = vec2(float(x), float(y));
+                  vec2 cell = i + nb;
+                  vec2 pt = hash22(cell);
+                  pt = 0.5 + 0.4 * sin(uTime * speed + 6.2831 * pt);
+                  vec2 diff = nb + pt - f;
+                  float d = dot(diff, diff);
+                  if (d < d1) { d2 = d1; d1 = d; id = hash21(cell); }
+                  else if (d < d2) { d2 = d; }
+                }
+                return vec3(sqrt(d1), sqrt(d2) - sqrt(d1), id);
+              }
+
+              void main() {
+                vec2 c = vUv - 0.5;
+                float r = length(c) * 2.0;
+                if (r > 1.0) discard;
+                float mu = sqrt(1.0 - r * r);
+
+                // Convection cells on the disc
+                vec3 v = voronoi2(c * 8.0, 0.12);
+                float lane = 1.0 - smoothstep(0.01, 0.06, v.y);
+                float cellBright = 1.0 - lane * 0.30;
+
+                float limb = 0.30 + 0.70 * mu;
+                float starHeat = dot(uColor, vec3(0.15, 0.30, 0.55));
+                float whitePush = mix(0.35, 0.70, starHeat);
+                vec3 bright = mix(uColor * 1.15, vec3(1.0, 0.99, 0.96), whitePush);
+                vec3 col = mix(uColor * 0.75, bright, mu * cellBright) * limb;
+                float edge = 1.0 - smoothstep(0.88, 1.0, r);
+                gl_FragColor = vec4(col * 1.8, edge);
+              }
+            `}
+          />
+        </mesh>
+        {/* Single soft glow — bloom handles the rest */}
+        <mesh>
+          <planeGeometry args={[glowSize, glowSize]} />
+          <shaderMaterial
+            transparent
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            uniforms={{ uColor: { value: starCol } }}
+            vertexShader={`
+              varying vec2 vUv;
+              void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              }
+            `}
+            fragmentShader={`
+              uniform vec3 uColor;
+              varying vec2 vUv;
+              void main() {
+                vec2 c = vUv - 0.5;
+                float r = length(c) * 2.0;
+                float glow = exp(-r * r * 3.5) * 0.30;
+                glow += exp(-r * 5.0) * 0.10;
+                vec3 col = mix(vec3(1.0, 0.99, 0.96), uColor, r * 0.7);
+                gl_FragColor = vec4(col * glow, glow);
+              }
+            `}
+          />
+        </mesh>
+      </group>
     </group>
   );
 }
@@ -689,12 +1308,49 @@ function BeltParticles({ belt, starVisR, maxSma }: {
       pos[placed * 3] = Math.cos(a) * r;
       pos[placed * 3 + 1] = y;
       pos[placed * 3 + 2] = Math.sin(a) * r;
-      const c = bc.clone().multiplyScalar(0.5 + rnd() * 0.5);
+      const c = bc.clone().multiplyScalar(0.7 + rnd() * 0.3);
       col[placed * 3] = c.r; col[placed * 3 + 1] = c.g; col[placed * 3 + 2] = c.b;
       placed++;
     }
     return { pos: pos.slice(0, placed * 3), col: col.slice(0, placed * 3), n: placed };
   }, [belt, starVisR, maxSma]);
+
+  /* Belt particle shader: lights each particle based on angle from star at origin */
+  const beltShader = useMemo(() => ({
+    vertexShader: `
+      attribute vec3 color;
+      varying vec3 vColor;
+      varying float vLit;
+      void main() {
+        vColor = color;
+        // Star is at origin — light direction is normalize(-position) → toward star
+        // We want the side facing the camera to be bright when the particle
+        // is on the star-facing side. Use a simple radial falloff:
+        // particles closer to camera-star line are brighter.
+        vec3 toStar = -normalize(position);
+        // Use camera direction as view proxy for face-on check
+        vec3 toCam = normalize(cameraPosition - position);
+        // Half-Lambert: wrap lighting so back side isn't pure black
+        float NdotL = dot(toCam, toStar);
+        vLit = NdotL * 0.35 + 0.65; // range [0.30, 1.0]
+        vec4 mvp = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = 4.5 * (300.0 / -mvp.z);
+        gl_Position = projectionMatrix * mvp;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vLit;
+      void main() {
+        vec2 c = gl_PointCoord - 0.5;
+        float d = dot(c, c);
+        if (d > 0.25) discard;
+        float soft = 1.0 - smoothstep(0.05, 0.25, d);
+        vec3 col = vColor * vLit * 1.6;
+        gl_FragColor = vec4(col * soft, soft * 0.80);
+      }
+    `,
+  }), []);
 
   if (data.n === 0) return null;
   return (
@@ -703,58 +1359,373 @@ function BeltParticles({ belt, starVisR, maxSma }: {
         <bufferAttribute attach="attributes-position" args={[data.pos, 3]} />
         <bufferAttribute attach="attributes-color" args={[data.col, 3]} />
       </bufferGeometry>
-      <pointsMaterial vertexColors size={0.035} transparent opacity={0.55}
-        sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
+      <shaderMaterial
+        vertexShader={beltShader.vertexShader}
+        fragmentShader={beltShader.fragmentShader}
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+      />
     </points>
   );
 }
 
 function Starfield() {
-  const data = useMemo(() => {
-    const n = 1800;
+  /* ── Twinkling star shader ── */
+  const twinkleMatRef = useRef<THREE.ShaderMaterial>(null!);
+
+  const TWINKLE_VERT = `
+    attribute float aSize;
+    attribute float aPhase;
+    attribute float aBrightness;
+    varying float vPhase;
+    varying float vBrightness;
+    varying vec3 vColor2;
+    void main() {
+      vPhase = aPhase;
+      vBrightness = aBrightness;
+      vColor2 = color;
+      vec4 mvp = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = aSize;
+      gl_Position = projectionMatrix * mvp;
+    }
+  `;
+  const TWINKLE_FRAG = `
+    uniform float uTime;
+    varying float vPhase;
+    varying float vBrightness;
+    varying vec3 vColor2;
+    void main() {
+      // Soft circular falloff
+      vec2 c = gl_PointCoord - 0.5;
+      float d = dot(c, c);
+      if (d > 0.25) discard;
+      float soft = 1.0 - smoothstep(0.0, 0.25, d);
+      // Multi-frequency twinkle (atmospheric scintillation)
+      float t1 = sin(uTime * 2.7 + vPhase) * 0.15;
+      float t2 = sin(uTime * 5.3 + vPhase * 1.7) * 0.08;
+      float t3 = sin(uTime * 0.9 + vPhase * 0.4) * 0.10;
+      float twinkle = 1.0 + t1 + t2 + t3;
+      // Brighter stars twinkle less (stabilized seeing)
+      float twinkleMix = mix(twinkle, 1.0, smoothstep(0.3, 0.9, vBrightness));
+      vec3 col = vColor2 * vBrightness * twinkleMix;
+      gl_FragColor = vec4(col, soft * vBrightness * twinkleMix);
+    }
+  `;
+
+  useFrame(() => {
+    if (twinkleMatRef.current) {
+      twinkleMatRef.current.uniforms.uTime.value = _orbit.time;
+    }
+  });
+
+  /* ── Build star geometry from real HYG catalog ── */
+  const starGeo = useMemo(() => {
+    const raw = getStarData();
+    const n = STAR_COUNT;
+    const R = 60; // sky sphere radius
+
     const pos = new Float32Array(n * 3);
     const col = new Float32Array(n * 3);
     const sizes = new Float32Array(n);
-    // Star color palette: blue-white, white, yellow, orange, red-tinted
-    const palette = [
-      [0.65, 0.72, 0.92], // blue-white (O/B)
-      [0.82, 0.85, 0.95], // white (A)
-      [0.92, 0.90, 0.80], // yellow-white (F/G)
-      [0.95, 0.78, 0.55], // orange (K)
-      [0.88, 0.60, 0.50], // red-tinted (M)
-    ];
+    const phases = new Float32Array(n);
+    const brightness = new Float32Array(n);
+
+    // Magnitude range: ~-1.5 (Sirius) to 6.5
+    const magMin = -1.5, magMax = 6.5;
+
     for (let i = 0; i < n; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const r = 60 + Math.random() * 40;
-      pos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      pos[i * 3 + 2] = r * Math.cos(phi);
-      // Spectral color (biased toward blue-white / white, fewer warm)
-      const ci = Math.random() < 0.45 ? 0 :
-                 Math.random() < 0.55 ? 1 :
-                 Math.random() < 0.60 ? 2 :
-                 Math.random() < 0.75 ? 3 : 4;
-      const c = palette[ci];
-      // Brightness variation — most dim, a few bright
-      const brightness = 0.25 + Math.pow(Math.random(), 3.0) * 0.75;
-      col[i * 3]     = c[0] * brightness;
-      col[i * 3 + 1] = c[1] * brightness;
-      col[i * 3 + 2] = c[2] * brightness;
-      // Size variation — a few bright stars are larger
-      sizes[i] = 0.04 + Math.pow(Math.random(), 4.0) * 0.12;
+      const off = i * FIELDS_PER_STAR;
+      const x = raw[off], y = raw[off + 1], z = raw[off + 2];
+      const mag = raw[off + 3];
+      const bv = raw[off + 4];
+
+      // Place on sky sphere (J2000 equatorial axes → Three.js: x=right, y=up, z=toward)
+      pos[i * 3]     = x * R;
+      pos[i * 3 + 1] = z * R;  // Dec → Y (up)
+      pos[i * 3 + 2] = -y * R; // RA increases left → flip
+
+      // Color from B-V index
+      const [cr, cg, cb] = bvToRGB(bv);
+      col[i * 3]     = cr;
+      col[i * 3 + 1] = cg;
+      col[i * 3 + 2] = cb;
+
+      // Brightness: inverse magnitude (brighter = lower mag)
+      const b = Math.pow(10, -0.4 * (mag - magMax)) / Math.pow(10, -0.4 * (magMin - magMax));
+      brightness[i] = Math.min(1.0, 0.08 + b * 0.92);
+
+      // Point size: bright stars get bigger (log scale), faint stars are tiny
+      const sizeFactor = Math.max(0.3, 1.0 - (mag - magMin) / (magMax - magMin));
+      sizes[i] = 0.6 + sizeFactor * 3.5; // 0.6px to 4.1px
+
+      // Random phase for twinkle (deterministic from index)
+      phases[i] = ((i * 127 + i * i * 31) % 10000) / 10000 * Math.PI * 2;
     }
-    return { pos, col, sizes };
+
+    return { pos, col, sizes, phases, brightness, n };
   }, []);
+
+  // Milky Way — TRUE particle-based starfield along galactic plane
+  // 28K point-particles with density distribution + 40 soft glow sprites for diffuse underglow
+  const mwParticles = useMemo(() => {
+    const COUNT = 28000;
+    const pos = new Float32Array(COUNT * 3);
+    const col = new Float32Array(COUNT * 3);
+    const sizes = new Float32Array(COUNT);
+    let _s = 271828;
+    const rng = () => { _s = (_s * 16807 + 7) % 2147483647; return _s / 2147483647; };
+    const mwTilt = 1.05;
+    const cosMW = Math.cos(mwTilt), sinMW = Math.sin(mwTilt);
+    const R = 54;
+
+    // Color palette for MW stars (blue-white dominant, some warm)
+    // B-V color index simulation
+    const starCol = (t: number): [number, number, number] => {
+      // t: 0=blue → 0.5=white → 1.0=warm orange
+      if (t < 0.3) return [0.7 + t, 0.75 + t * 0.5, 1.0];          // blue-white
+      if (t < 0.6) return [0.95 + t * 0.05, 0.92, 0.88 - t * 0.1]; // white-yellow
+      return [1.0, 0.82 - (t - 0.6) * 0.4, 0.6 - (t - 0.6) * 0.5]; // warm yellow-orange
+    };
+
+    // Dust lane mask: reduces density along the Great Rift
+    const dustLane = (theta: number, galLat: number): number => {
+      // Great Rift runs from Cygnus to Centaurus (~60% of the band)
+      const riftCenter = 0.0; // galLat offset
+      const riftWidth = 0.04 + 0.02 * Math.sin(theta * 1.5);
+      const inRift = Math.exp(-(galLat - riftCenter) * (galLat - riftCenter) / (2 * riftWidth * riftWidth));
+      // Only active in part of the band
+      const riftLon = 0.5 + 0.5 * Math.sin(theta - 0.3);
+      return 1.0 - inRift * riftLon * 0.7;
+    };
+
+    for (let i = 0; i < COUNT; i++) {
+      const theta = rng() * Math.PI * 2;
+
+      // Gaussian latitude distribution — tight along galactic plane
+      // Box-Muller for gaussian
+      const u1 = Math.max(1e-10, rng()), u2 = rng();
+      let galLat = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * 0.09;
+      galLat = Math.max(-0.5, Math.min(0.5, galLat)); // clamp
+
+      // Density boost toward galactic center (theta ~ PI)
+      const coreDist = Math.abs(theta - Math.PI);
+      const coreFactor = coreDist < 0.8 ? 1.0 + (0.8 - coreDist) * 2.5 : 1.0;
+      // Reject faint stars away from core to concentrate density
+      if (coreFactor < 1.3 && rng() > 0.65) {
+        // Redistribute rejected star to core region
+        const newTheta = Math.PI + (rng() - 0.5) * 1.2;
+        const phi = Math.PI / 2 + galLat;
+        const x = R * Math.sin(phi) * Math.cos(newTheta);
+        const y = R * Math.cos(phi);
+        const z = R * Math.sin(phi) * Math.sin(newTheta);
+        pos[i * 3] = x * cosMW - y * sinMW;
+        pos[i * 3 + 1] = x * sinMW + y * cosMW;
+        pos[i * 3 + 2] = z;
+      } else {
+        // Apply dust lane suppression
+        const dust = dustLane(theta, galLat);
+        if (rng() > dust) {
+          galLat += (rng() > 0.5 ? 1 : -1) * (0.06 + rng() * 0.12); // push out of rift
+        }
+        const phi = Math.PI / 2 + galLat;
+        const x = R * Math.sin(phi) * Math.cos(theta);
+        const y = R * Math.cos(phi);
+        const z = R * Math.sin(phi) * Math.sin(theta);
+        pos[i * 3] = x * cosMW - y * sinMW;
+        pos[i * 3 + 1] = x * sinMW + y * cosMW;
+        pos[i * 3 + 2] = z;
+      }
+
+      // Star color: mostly blue-white, some warm in core region
+      const colorT = rng() < 0.15 ? 0.6 + rng() * 0.4 : rng() * 0.55;
+      const [cr, cg, cb] = starCol(colorT);
+      // Brightness variation: most are dim, few are bright
+      const bright = Math.pow(rng(), 2.8) * 0.7 + 0.15;
+      col[i * 3] = cr * bright;
+      col[i * 3 + 1] = cg * bright;
+      col[i * 3 + 2] = cb * bright;
+
+      // Size: most tiny (unresolved), few larger (resolved brighter stars)
+      const sizeRoll = rng();
+      sizes[i] = sizeRoll < 0.85 ? 0.3 + rng() * 0.5
+               : sizeRoll < 0.97 ? 0.8 + rng() * 1.0
+               : 1.8 + rng() * 1.5; // rare bright stars
+    }
+    return { pos, col, sizes, count: COUNT };
+  }, []);
+
+  // Soft diffuse underglow sprites (reduced from 305 → 40) for the smooth band background
+  const mwGlow = useMemo(() => {
+    const items: { pos: [number, number, number]; size: number; opacity: number; color: string }[] = [];
+    let _s = 314159;
+    const rng = () => { _s = (_s * 16807 + 7) % 2147483647; return _s / 2147483647; };
+    const mwTilt = 1.05;
+    const cosMW = Math.cos(mwTilt), sinMW = Math.sin(mwTilt);
+    const softPalette = ['#a0b0e0', '#b8c4e8', '#c0c8e4', '#90a0d0', '#c8d0f0'];
+    // Broad soft band (20 large dim sprites)
+    for (let i = 0; i < 20; i++) {
+      const theta = (i / 20) * Math.PI * 2 + (rng() - 0.5) * 0.2;
+      const galLat = (rng() - 0.5) * 0.22;
+      const phi = Math.PI / 2 + galLat;
+      const r = 53.8;
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.cos(phi);
+      const z = r * Math.sin(phi) * Math.sin(theta);
+      items.push({
+        pos: [x * cosMW - y * sinMW, x * sinMW + y * cosMW, z],
+        size: 24 + rng() * 20,
+        opacity: 0.03 + rng() * 0.04,
+        color: softPalette[Math.floor(rng() * softPalette.length)],
+      });
+    }
+    // Galactic core glow (20 warm sprites)
+    for (let i = 0; i < 20; i++) {
+      const theta = Math.PI + (rng() - 0.5) * 0.9;
+      const galLat = (rng() - 0.5) * 0.12;
+      const phi = Math.PI / 2 + galLat;
+      const r = 53.8;
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.cos(phi);
+      const z = r * Math.sin(phi) * Math.sin(theta);
+      const warmth = rng();
+      items.push({
+        pos: [x * cosMW - y * sinMW, x * sinMW + y * cosMW, z],
+        size: 14 + rng() * 22,
+        opacity: 0.06 + rng() * 0.08,
+        color: warmth > 0.5 ? '#f0e8d8' : warmth > 0.25 ? '#e8e0f0' : '#fffff0',
+      });
+    }
+    return items;
+  }, []);
+
+  // Nebula patches — vivid emission nebulae scattered through the band
+  const nebulae = useMemo(() => {
+    const items: { pos: [number, number, number]; size: number; opacity: number; color: string }[] = [];
+    let _s = 161803;
+    const rng = () => { _s = (_s * 16807 + 7) % 2147483647; return _s / 2147483647; };
+    const mwTilt = 1.05;
+    const cosMW = Math.cos(mwTilt), sinMW = Math.sin(mwTilt);
+    const nebColors = [
+      '#ff3355', '#3388ff', '#33cc88', '#ff7733', '#aa33ff', '#33ccff',
+      '#ff55aa', '#55ff99', '#ff5533', '#7755ff', '#33ffcc', '#ffaa33',
+      '#ff2244', '#2266ff', '#22aa66', '#cc55ff', '#55ddff', '#ffcc55',
+    ];
+    // Large dramatic nebulae
+    for (let i = 0; i < 18; i++) {
+      const theta = rng() * Math.PI * 2;
+      const galLat = (rng() - 0.5) * 0.30;
+      const phi = Math.PI / 2 + galLat;
+      const r = 53;
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.cos(phi);
+      const z = r * Math.sin(phi) * Math.sin(theta);
+      const rx = x * cosMW - y * sinMW;
+      const ry = x * sinMW + y * cosMW;
+      items.push({
+        pos: [rx, ry, z],
+        size: 12 + rng() * 22,
+        opacity: 0.03 + rng() * 0.05,
+        color: nebColors[Math.floor(rng() * nebColors.length)],
+      });
+    }
+    // Small bright emission knots
+    for (let i = 0; i < 25; i++) {
+      const theta = rng() * Math.PI * 2;
+      const galLat = (rng() - 0.5) * 0.22;
+      const phi = Math.PI / 2 + galLat;
+      const r = 53;
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.cos(phi);
+      const z = r * Math.sin(phi) * Math.sin(theta);
+      const rx = x * cosMW - y * sinMW;
+      const ry = x * sinMW + y * cosMW;
+      items.push({
+        pos: [rx, ry, z],
+        size: 3 + rng() * 7,
+        opacity: 0.04 + rng() * 0.06,
+        color: nebColors[Math.floor(rng() * nebColors.length)],
+      });
+    }
+    return items;
+  }, []);
+
+  // Shared glow texture for soft-circle sprites (eliminates visible square edges)
+  const glowTex = useMemo(() => getGlowTexture(), []);
+
   return (
-    <points>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[data.pos, 3]} />
-        <bufferAttribute attach="attributes-color" args={[data.col, 3]} />
-      </bufferGeometry>
-      <pointsMaterial vertexColors size={0.06} transparent opacity={0.65}
-        sizeAttenuation={false} depthWrite={false} />
-    </points>
+    <group>
+      {/* Real HYG catalog stars with twinkling shader */}
+      <points>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[starGeo.pos, 3]} />
+          <bufferAttribute attach="attributes-color" args={[starGeo.col, 3]} />
+          <bufferAttribute attach="attributes-aSize" args={[starGeo.sizes, 1]} />
+          <bufferAttribute attach="attributes-aPhase" args={[starGeo.phases, 1]} />
+          <bufferAttribute attach="attributes-aBrightness" args={[starGeo.brightness, 1]} />
+        </bufferGeometry>
+        <shaderMaterial
+          ref={twinkleMatRef}
+          vertexShader={TWINKLE_VERT}
+          fragmentShader={TWINKLE_FRAG}
+          uniforms={{ uTime: { value: 0 } }}
+          vertexColors
+          transparent
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </points>
+      {/* Milky Way TRUE particle starfield — 28K star-like points */}
+      <points>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[mwParticles.pos, 3]} />
+          <bufferAttribute attach="attributes-color" args={[mwParticles.col, 3]} />
+          <bufferAttribute attach="attributes-aSize" args={[mwParticles.sizes, 1]} />
+        </bufferGeometry>
+        <shaderMaterial
+          vertexShader={`
+            attribute float aSize;
+            varying vec3 vColor;
+            void main() {
+              vColor = color;
+              vec4 mv = modelViewMatrix * vec4(position, 1.0);
+              gl_PointSize = aSize * (280.0 / -mv.z);
+              gl_Position = projectionMatrix * mv;
+            }
+          `}
+          fragmentShader={`
+            varying vec3 vColor;
+            void main() {
+              float d = length(gl_PointCoord - 0.5) * 2.0;
+              float core = 1.0 - smoothstep(0.0, 0.35, d);
+              float glow = exp(-d * d * 3.0) * 0.6;
+              float alpha = core + glow;
+              if (alpha < 0.01) discard;
+              vec3 col = vColor * (core * 1.2 + glow * 0.8);
+              gl_FragColor = vec4(col, alpha);
+            }
+          `}
+          vertexColors
+          transparent
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </points>
+      {/* Milky Way soft diffuse underglow — reduced sprite layer */}
+      {mwGlow.map((g, i) => (
+        <sprite key={`mw-glow-${i}`} position={g.pos} scale={[g.size, g.size, 1]}>
+          <spriteMaterial map={glowTex} color={g.color} transparent opacity={g.opacity}
+            depthWrite={false} blending={THREE.AdditiveBlending} />
+        </sprite>
+      ))}
+      {/* Nebula patches -- vivid colored emission along band */}
+      {nebulae.map((n, i) => (
+        <sprite key={`nebula-${i}`} position={n.pos} scale={[n.size, n.size, 1]}>
+          <spriteMaterial map={glowTex} color={n.color} transparent opacity={n.opacity}
+            depthWrite={false} blending={THREE.AdditiveBlending} />
+        </sprite>
+      ))}
+    </group>
   );
 }
 
@@ -812,10 +1783,12 @@ function HabitatStation({ orbitR, period, startAngle, type, label }: {
         <meshStandardMaterial color="#334466" emissive="#224488" emissiveIntensity={0.15}
           roughness={0.3} metalness={0.6} />
       </mesh>
-      <Text position={[0, cR + 0.08, 0]} fontSize={0.05}
-        color="#4d9fff" fillOpacity={0.55} anchorX="center" anchorY="bottom">
-        {label}
-      </Text>
+      <Billboard>
+        <Text position={[0, cR + 0.08, 0]} fontSize={0.05}
+          color="#4d9fff" fillOpacity={0.55} anchorX="center" anchorY="bottom">
+          {label}
+        </Text>
+      </Billboard>
     </group>
   );
 }
@@ -1044,7 +2017,7 @@ function RingParticles({ rings, tilt = 0.12 }: { rings: any[]; tilt?: number }) 
 
   if (data.count === 0) return null;
   return (
-    <group rotation={[-Math.PI / 2 + tilt, 0, 0]}>
+    <group rotation={[tilt, 0, 0]}>
       <points>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" args={[data.pos, 3]} />
@@ -1059,14 +2032,31 @@ function RingParticles({ rings, tilt = 0.12 }: { rings: any[]; tilt?: number }) 
 
 /* ━━ Moon Orbit Line ━━ */
 function MoonOrbitLine({ radius, active = false }: { radius: number; active?: boolean }) {
+  const lineObj = useMemo(() => {
+    const pts: THREE.Vector3[] = [];
+    const segs = 128;
+    for (let i = 0; i <= segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius));
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    const mat = new THREE.LineDashedMaterial({
+      color: active ? '#6ab4ff' : '#4a6a8a',
+      transparent: true,
+      opacity: active ? 0.70 : 0.40,
+      dashSize: radius * 0.06,
+      gapSize: radius * 0.04,
+      depthWrite: false,
+    });
+    const obj = new THREE.Line(geo, mat);
+    obj.computeLineDistances();
+    return obj;
+  }, [radius, active]);
+
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]}>
-      <ringGeometry args={[radius - 0.005, radius + 0.005, 80]} />
-      <meshBasicMaterial
-        color={active ? '#4d9fff' : '#2a4060'}
-        transparent opacity={active ? 0.45 : 0.22}
-        depthWrite={false} />
-    </mesh>
+    <group>
+      <primitive object={lineObj} />
+    </group>
   );
 }
 
@@ -1639,15 +2629,76 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
     }
   }, [view.depth]);
 
-  /* ── Fetch system data ── */
+  /* ── Fetch system data ──
+   * Priority: live API → bundled static data → Tauri cache */
   useEffect(() => {
     let dead = false;
     (async () => {
+      // 1. Try live API
       try {
         const r = await fetch(`/api/system/${encodeURIComponent(systemId)}`);
-        const d = await r.json();
-        if (!dead) setSystemData(d);
-      } catch (e) { console.error('[Focus] fetch failed', e); }
+        if (r.ok) {
+          const d = await r.json();
+          if (!dead && d?.star) {
+            console.info(`[Focus] Loaded ${systemId} from API – ${d.planets?.length ?? 0} planets`);
+            setSystemData(d);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('[Focus] API fetch failed:', e);
+      }
+
+      // 2. Try bundled static detail data (public/data/systemDetails.json)
+      try {
+        const r2 = await fetch('/data/systemDetails.json');
+        if (r2.ok) {
+          const allDetails = await r2.json();
+          const detail = allDetails[systemId];
+          if (!dead && detail) {
+            const planets = detail.planets ?? [];
+            const belts = detail.belts ?? [];
+            // Look up real star metadata from bundled systems list
+            const starMeta = (bundledSystems as any[]).find((s: any) => s.main_id === systemId);
+            const lum = starMeta?.luminosity ?? 1.0;
+            const star = starMeta
+              ? { ...starMeta }
+              : { main_id: systemId, spectral_class: 'G', teff: 5600, luminosity: lum };
+            console.info(`[Focus] Loaded ${systemId} from bundled data – ${planets.length} planets`);
+            setSystemData({
+              star,
+              planets,
+              belts,
+              habitable_zone: { inner_au: Math.sqrt(lum) * 0.95, outer_au: Math.sqrt(lum) * 1.37 },
+              summary: {
+                total_planets: planets.length,
+                total_belts: belts.length,
+                observed_planets: planets.filter((p: any) => p.confidence === 'observed').length,
+                inferred_planets: planets.filter((p: any) => p.confidence === 'inferred').length,
+              },
+            });
+            return;
+          }
+        }
+      } catch (e2) {
+        console.warn('[Focus] Bundled data fetch failed:', e2);
+      }
+
+      // 3. Try Tauri SQLite cache
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const cached = await invoke<{ data_json: string } | null>('get_cached_system', { mainId: systemId });
+        if (!dead && cached?.data_json) {
+          const d = JSON.parse(cached.data_json);
+          console.info(`[Focus] Loaded ${systemId} from Tauri cache`);
+          setSystemData(d);
+          return;
+        }
+      } catch (e3) {
+        // Tauri API may not be available in browser-only mode
+      }
+
+      if (!dead) console.error(`[Focus] No data source available for ${systemId}`);
     })();
     return () => { dead = true; };
   }, [systemId]);
@@ -1684,7 +2735,7 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
           in_habitable_zone: (p.sub_type_flags || []).includes('habitable_zone'),
           texture_resolution: 512,
         });
-        if (!dead) { setTexturesV2(result); setTexStatus('done'); }
+        if (!dead) { setTexturesV2(result); setTexStatus('done'); setUsePBR(true); }
       } catch { if (!dead) setTexStatus('failed'); }
     })();
 
@@ -2026,9 +3077,10 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
 
                 {/* ═══ SYSTEM DEPTH ═══ */}
                 <group visible={view.depth === 'system'}>
-                    <OrreryStar color={starColor} size={STAR_VIS_R} />
+                    <OrreryStar color={starColor} size={starVisRadius(systemData?.star?.luminosity ?? 1)} teff={systemData?.star?.teff} />
                     <pointLight position={[0, 0, 0]} intensity={3} color={starColor} distance={40} />
-                    <ambientLight intensity={0.06} />
+                    {/* Hemisphere light: star tint above, deep space blue below */}
+                    <hemisphereLight args={[starColor, '#040810', 0.04]} />
 
                     {hz && <HabitableZone inner={hz.inner_au} outer={hz.outer_au}
                       starVisR={STAR_VIS_R} maxSma={maxSma} />}
@@ -2113,9 +3165,16 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
 
                 {/* ═══ PLANET DEPTH — planet at center, moons orbit ═══ */}
                 <group visible={view.depth === 'planet'}>
-                  {/* Lighting for meshStandardMaterial colony buildings */}
-                  <directionalLight position={[10, 3, 5]} intensity={1.2} color={starColor} />
-                  <ambientLight intensity={0.1} />
+                  {/* Lighting: star-colored key + hemisphere fill */}
+                  <directionalLight position={[10, 3, 5]} intensity={1.4} color={starColor} />
+                  <hemisphereLight args={[starColor, '#020408', 0.02]} />
+                  {/* Planetshine — colored reflected light from parent onto moons */}
+                  {curPlanet && (() => {
+                    const ps = planetShineFromType(curPlanet.planet_type);
+                    const psHex = '#' + [ps[0], ps[1], ps[2]].map(
+                      v => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+                    return <pointLight position={[0, 0, 0]} intensity={0.6} color={psHex} distance={12} />;
+                  })()}
                   {curPlanet && (<>
                     <RotatingSurfaceGroup rotationSpeed={curPlanet?.rotation_period_days
                       ? 0.04 * (1.0 / Math.max(curPlanet.rotation_period_days, 0.1))
@@ -2174,7 +3233,8 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                     </RotatingSurfaceGroup>
 
                     {curPlanet.ring_system?.rings?.length > 0 && (
-                      <RingParticles rings={curPlanet.ring_system.rings} tilt={0} />
+                      <RingParticles rings={curPlanet.ring_system.rings}
+                        tilt={Math.sin((globeSeed || 0) * 47.3) * 0.15} />
                     )}
 
                     {(() => {
@@ -2198,7 +3258,7 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                       const oR = moonOrbits[fi];
 
                       const relR = (m.radius_earth || 0.005) / maxMoonRad;
-                      const moonR = 0.04 + relR * 0.30;
+                      const moonR = 0.02 + relR * 0.14;
 
                       // Potato moon detection: very small bodies (< 50km radius equivalent)
                       const isPotato = (m.radius_earth || 0) < 0.008;
@@ -2217,14 +3277,18 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                       const mShift = moonColorShift(m, mi);
                       const isActive = view.depth === 'moon' && view.moonIdx === mi;
 
-                      // Potato moon color from profile lookup
-                      const potatoColor = isPotato ? (
-                        m.moon_type === 'captured-irregular' ? '#887766' :
-                        m.moon_type === 'shepherd' ? '#99aabb' : '#776655'
-                      ) : undefined;
+                      // ── Potato moon visual diversity ──
+                      // Deform style from flags
+                      const moonFlags: string[] = m.sub_type_flags || [];
+                      const potatoDeform: 'generic' | 'miranda' | 'hyperion' | 'eros' =
+                        moonFlags.includes('chevron_terrain') || moonFlags.includes('coronae') ? 'miranda' :
+                        moonFlags.includes('spongy_pitted') || m.moon_type === 'captured-irregular' && (m.mass_earth || 0) < 0.0003 ? 'hyperion' :
+                        moonFlags.includes('elongated') || moonFlags.includes('contact_binary') ? 'eros' :
+                        'generic';
+                      // Potato color: two-tone based on moon type/profile
+                      const potatoColors = isPotato ? pickPotatoColors(m, mType) : undefined;
 
                       // Atmosphere detection (Titan, etc.)
-                      const moonFlags: string[] = m.sub_type_flags || [];
                       const hasMoonAtm = moonFlags.includes('thick_haze') ||
                         moonFlags.includes('dense_atmosphere') ||
                         m.moon_type === 'atmosphere-moon' ||
@@ -2248,10 +3312,13 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                             mass={m.mass_earth}
                             tidalHeating={m.tidal_heating}
                             isPotato={isPotato}
-                            potatoColor={potatoColor}
+                            potatoColor={potatoColors?.[0]}
+                            potatoColor2={potatoColors?.[1]}
+                            potatoDeform={potatoDeform}
                             starSpectralClass={starSpec}
                             hasAtmosphere={hasMoonAtm}
                             atmColor={moonAtmColor}
+                            planetShineColor={planetShineFromType(curPlanet?.planet_type)}
                           />
                         </group>
                       );
@@ -2281,6 +3348,8 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                             colorShift={[0, 0, 0]}
                             isPotato={true}
                             potatoColor="#99aabb"
+                            potatoColor2="#686878"
+                            potatoDeform="generic"
                           />
                           {/* Outer shepherd */}
                           <OrbitingMoon
@@ -2297,6 +3366,8 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                             colorShift={[0, 0, 0]}
                             isPotato={true}
                             potatoColor="#aabbcc"
+                            potatoColor2="#787888"
+                            potatoDeform="eros"
                           />
                         </group>
                       );
@@ -2327,7 +3398,8 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                     )}
 
                     <directionalLight position={[10, 3, 5]} intensity={1.5} color={starColor} />
-                    <ambientLight intensity={0.12} />
+                    <hemisphereLight args={[starColor, '#020408', 0.02]} />
+                    <DistantStar color={starColor} direction={[1, 0.3, 0.5]} luminosity={systemData?.star?.luminosity ?? 1} />
                   </>)}
                 </group>
 
@@ -2435,8 +3507,9 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                       </>
                     )}
 
-                    <directionalLight position={[10, 3, 5]} intensity={1.2} color={starColor} />
-                    <ambientLight intensity={0.15} />
+                    <directionalLight position={[10, 3, 5]} intensity={1.3} color={starColor} />
+                    <hemisphereLight args={[starColor, '#020408', 0.02]} />
+                    <DistantStar color={starColor} direction={[1, 0.3, 0.5]} luminosity={systemData?.star?.luminosity ?? 1} />
                   </>)}
                 </group>
 
@@ -2457,28 +3530,35 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                       astData.spectral_class === 'C' ? '#555544' :
                       astData.spectral_class === 'S' ? '#998866' :
                       astData.spectral_class === 'M' ? '#aaaaaa' : '#887755';
+                    const astColor2 = isIcy ? '#556688' :
+                      astData.spectral_class === 'C' ? '#333322' :
+                      astData.spectral_class === 'S' ? '#665540' :
+                      astData.spectral_class === 'M' ? '#777777' : '#554433';
 
                     return (<>
                       <group scale={[visualScale, visualScale, visualScale]}>
-                        <PotatoMoon seed={astSeed} color={astColor} detail={4} />
+                        <PotatoMoon seed={astSeed} color={astColor} color2={astColor2}
+                          detail={4} deformStyle={diam < 50 ? 'eros' : 'generic'} />
                       </group>
 
                       {/* Slow rotation */}
                       <group>
-                        <Text position={[0, visualScale + 0.3, 0]} fontSize={0.14}
-                          color="#c0d8ff" fillOpacity={0.8}
-                          anchorX="center" anchorY="bottom">
-                          {astData.name || 'Unnamed'}
-                        </Text>
-                        <Text position={[0, visualScale + 0.12, 0]} fontSize={0.08}
-                          color="#7899bb" fillOpacity={0.6}
-                          anchorX="center" anchorY="bottom">
-                          {diam.toFixed(0)} km · {isIcy ? 'Icy' : (astData.spectral_class || '?')}-type
-                        </Text>
+                        <Billboard>
+                          <Text position={[0, visualScale + 0.3, 0]} fontSize={0.14}
+                            color="#c0d8ff" fillOpacity={0.8}
+                            anchorX="center" anchorY="bottom">
+                            {astData.name || 'Unnamed'}
+                          </Text>
+                          <Text position={[0, visualScale + 0.12, 0]} fontSize={0.08}
+                            color="#7899bb" fillOpacity={0.6}
+                            anchorX="center" anchorY="bottom">
+                            {diam.toFixed(0)} km · {isIcy ? 'Icy' : (astData.spectral_class || '?')}-type
+                          </Text>
+                        </Billboard>
                       </group>
 
                       <directionalLight position={[5, 3, 8]} intensity={1.5} color={starColor} />
-                      <ambientLight intensity={0.15} />
+                      <hemisphereLight args={[starColor, '#020408', 0.03]} />
                     </>);
                   })()}
                 </group>

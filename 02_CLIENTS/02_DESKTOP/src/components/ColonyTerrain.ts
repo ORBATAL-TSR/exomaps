@@ -826,10 +826,12 @@ export function computeColonyData(
       ? floodFillTerritory(hm, tp.oceanLevel, cells, tp.seed)
       : new Set<number>();
 
-    // ── Roads + sea routes — only between buildings within shared territory ──
+    // ── Roads + sea routes — MST-based: connect buildings via minimum spanning tree ──
+    //    This prevents redundant overlapping roads (no N² full-mesh connections)
     const landRoads: [number, number][][] = [];
     const seaRoutes: [number, number][][] = [];
     const roadCells = new Set<number>(); // accumulated road cells for road-awareness
+    const roadSegmentSet = new Set<string>(); // dedup segment keys
 
     // Check if two buildings are connected via territory (BFS on territory grid)
     const canReachInTerritory = (ai: number, bi: number): boolean => {
@@ -863,60 +865,93 @@ export function computeColonyData(
       return false;
     };
 
+    // Build edges sorted by great-circle distance (for MST/Kruskal)
+    type Edge = { i: number; j: number; dist: number };
+    const edges: Edge[] = [];
     for (let i = 0; i < buildings.length; i++) {
       for (let j = i + 1; j < buildings.length; j++) {
-        // Only connect buildings that can reach each other via territory
-        if (!canReachInTerritory(i, j)) {
-          // Not territory-connected — try sea route if there's ocean
-          if (tp.oceanLevel > 0.05) {
-            const [ri, ci2] = cells[i];
-            const [rj, cj] = cells[j];
+        const dLat = Math.abs(buildings[i].lat - buildings[j].lat);
+        const dLon = Math.min(
+          Math.abs(buildings[i].lon - buildings[j].lon),
+          360 - Math.abs(buildings[i].lon - buildings[j].lon),
+        );
+        const dist = Math.sqrt(dLat * dLat + dLon * dLon);
+        if (dist <= maxRoadDeg) {
+          edges.push({ i, j, dist });
+        }
+      }
+    }
+    edges.sort((a, b) => a.dist - b.dist);
+
+    // Union-Find for Kruskal MST
+    const ufParent = Array.from({ length: buildings.length }, (_, k) => k);
+    const ufRank = new Uint8Array(buildings.length);
+    function ufFind(x: number): number {
+      while (ufParent[x] !== x) { ufParent[x] = ufParent[ufParent[x]]; x = ufParent[x]; }
+      return x;
+    }
+    function ufUnion(a: number, b: number): boolean {
+      const ra = ufFind(a), rb = ufFind(b);
+      if (ra === rb) return false;
+      if (ufRank[ra] < ufRank[rb]) ufParent[ra] = rb;
+      else if (ufRank[ra] > ufRank[rb]) ufParent[rb] = ra;
+      else { ufParent[rb] = ra; ufRank[ra]++; }
+      return true;
+    }
+
+    // Helper: add cells from a raw path to existing road set, dedup segments
+    function addRoadPath(rawPath: [number, number][]) {
+      // Record cells used by this road
+      for (const [lt, ln] of rawPath) {
+        const [pr, pc] = latLonToCell(lt, ln);
+        roadCells.add(cellIdx(pr, pc));
+      }
+      // Smooth and deduplicate segments
+      const smoothed = catmullRomSmooth(rawPath);
+      const deduped: [number, number][] = [smoothed[0]];
+      for (let k = 1; k < smoothed.length; k++) {
+        const segKey = `${smoothed[k-1][0].toFixed(2)},${smoothed[k-1][1].toFixed(2)}-${smoothed[k][0].toFixed(2)},${smoothed[k][1].toFixed(2)}`;
+        const segKeyRev = `${smoothed[k][0].toFixed(2)},${smoothed[k][1].toFixed(2)}-${smoothed[k-1][0].toFixed(2)},${smoothed[k-1][1].toFixed(2)}`;
+        if (!roadSegmentSet.has(segKey) && !roadSegmentSet.has(segKeyRev)) {
+          roadSegmentSet.add(segKey);
+          deduped.push(smoothed[k]);
+        }
+      }
+      if (deduped.length > 1) landRoads.push(deduped);
+    }
+
+    // MST pass: connect buildings with minimum spanning tree (no redundant roads)
+    for (const edge of edges) {
+      if (ufUnion(edge.i, edge.j)) {
+        if (canReachInTerritory(edge.i, edge.j)) {
+          const [ri, ci2] = cells[edge.i];
+          const [rj, cj] = cells[edge.j];
+          const land = astar(hm, tp.oceanLevel, ri, ci2, rj, cj, 'land', tp.seed, roadCells);
+          if (land && land.length > 1) {
+            addRoadPath(land);
+          } else if (tp.oceanLevel > 0.05) {
             const coastI = findNearestCoast(hm, tp.oceanLevel, ri, ci2);
             const coastJ = findNearestCoast(hm, tp.oceanLevel, rj, cj);
             if (coastI && coastJ) {
               const sea = astar(hm, tp.oceanLevel, coastI[0], coastI[1], coastJ[0], coastJ[1], 'sea', tp.seed);
               if (sea && sea.length > 1) {
                 seaRoutes.push(catmullRomSmooth([
-                  cellCenter(ri, ci2),
-                  ...sea,
-                  cellCenter(rj, cj),
+                  cellCenter(ri, ci2), ...sea, cellCenter(rj, cj),
                 ]));
               }
             }
           }
-          continue;
-        }
-
-        const dLat = Math.abs(buildings[i].lat - buildings[j].lat);
-        const dLon = Math.min(
-          Math.abs(buildings[i].lon - buildings[j].lon),
-          360 - Math.abs(buildings[i].lon - buildings[j].lon),
-        );
-        if (Math.sqrt(dLat * dLat + dLon * dLon) > maxRoadDeg) continue;
-
-        const [ri, ci2] = cells[i];
-        const [rj, cj] = cells[j];
-
-        // Try land road (road-aware: prefer existing road cells)
-        const land = astar(hm, tp.oceanLevel, ri, ci2, rj, cj, 'land', tp.seed, roadCells);
-        if (land && land.length > 1) {
-          landRoads.push(catmullRomSmooth(land));
-          // Record cells used by this road for future road-awareness
-          for (const [lt, ln] of land) {
-            const [pr, pc] = latLonToCell(lt, ln);
-            roadCells.add(cellIdx(pr, pc));
-          }
         } else if (tp.oceanLevel > 0.05) {
-          // No land route — try sea route (coast to coast)
+          // Not territory-connected — try sea route
+          const [ri, ci2] = cells[edge.i];
+          const [rj, cj] = cells[edge.j];
           const coastI = findNearestCoast(hm, tp.oceanLevel, ri, ci2);
           const coastJ = findNearestCoast(hm, tp.oceanLevel, rj, cj);
           if (coastI && coastJ) {
             const sea = astar(hm, tp.oceanLevel, coastI[0], coastI[1], coastJ[0], coastJ[1], 'sea', tp.seed);
             if (sea && sea.length > 1) {
               seaRoutes.push(catmullRomSmooth([
-                cellCenter(ri, ci2),
-                ...sea,
-                cellCenter(rj, cj),
+                cellCenter(ri, ci2), ...sea, cellCenter(rj, cj),
               ]));
             }
           }

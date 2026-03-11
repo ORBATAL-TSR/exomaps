@@ -12,9 +12,10 @@
  * All 22 planet types have hand-tuned visual profiles.
  */
 
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, useEffect, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { getTextureTriplet, texUrl, GAS_TYPES as TEX_GAS_TYPES } from '../data/texturePalette';
 
 /* ── Planet visual profiles ──────────────────────────── */
 
@@ -331,66 +332,66 @@ export const V: Record<string, PlanetVisuals> = {
   //  GAS GIANT TYPES
   // ══════════════════════════════════════════════════════
 
-  'gas-giant': { // ★ JUPITER — ochre-cream zones, brown belts, Great Red Spot
-    color1: [0.84, 0.65, 0.34],    // warm cream-ochre zone (NH₃ clouds)
-    color2: [0.52, 0.30, 0.10],    // dark brown belt (deeper cloud deck)
-    color3: [0.92, 0.44, 0.18],    // Great Red Spot orange-red
+  'gas-giant': { // ★ JUPITER — vivid ochre-cream zones, deep brown belts, Great Red Spot
+    color1: [0.90, 0.70, 0.32],    // bright cream-ochre zone (NH₃ clouds)
+    color2: [0.46, 0.24, 0.06],    // deep brown belt (deeper cloud deck)
+    color3: [0.96, 0.40, 0.12],    // vivid Great Red Spot
     oceanColor: [0, 0, 0], oceanLevel: 0,
-    atmColor: [0.74, 0.58, 0.36], atmThickness: 0.85,
+    atmColor: [0.78, 0.58, 0.32], atmThickness: 0.85,
     emissive: 0, iceCaps: 0, clouds: 0, noiseScale: 2.0,
   },
 
-  'super-jupiter': { // Deeper ochres — compressed, intense bands
-    color1: [0.64, 0.42, 0.20],    // deep ochre
-    color2: [0.36, 0.18, 0.06],    // very dark belt
-    color3: [0.80, 0.34, 0.12],    // deep red storm
+  'super-jupiter': { // Deeper ochres — compressed, intense bands, high contrast
+    color1: [0.70, 0.44, 0.16],    // intense ochre zone
+    color2: [0.28, 0.12, 0.04],    // very dark belt (ultra-deep)
+    color3: [0.88, 0.28, 0.06],    // deep crimson storm
     oceanColor: [0, 0, 0], oceanLevel: 0,
-    atmColor: [0.58, 0.42, 0.26], atmThickness: 0.90,
+    atmColor: [0.62, 0.40, 0.20], atmThickness: 0.90,
     emissive: 0, iceCaps: 0, clouds: 0, noiseScale: 2.0,
   },
 
-  'hot-jupiter': { // ★ Scorched — glowing molten orange, day-side incandescent
-    color1: [0.94, 0.58, 0.16],    // bright molten orange
-    color2: [0.78, 0.30, 0.06],    // deep crimson belt
-    color3: [1.0, 0.70, 0.22],     // white-hot zone
+  'hot-jupiter': { // ★ Scorched — incandescent molten orange-white, day-night extremes
+    color1: [1.0, 0.62, 0.12],     // incandescent orange
+    color2: [0.82, 0.24, 0.04],    // deep blood-red belt
+    color3: [1.0, 0.82, 0.30],     // white-hot zone
     oceanColor: [0, 0, 0], oceanLevel: 0,
-    atmColor: [0.90, 0.48, 0.14], atmThickness: 0.95,
-    emissive: 0.38, iceCaps: 0, clouds: 0, noiseScale: 1.5,
+    atmColor: [0.94, 0.50, 0.10], atmThickness: 0.95,
+    emissive: 0.45, iceCaps: 0, clouds: 0, noiseScale: 1.5,
   },
 
-  'neptune-like': { // ★ NEPTUNE — vivid azure blue, dark methane bands
-    color1: [0.12, 0.36, 0.82],    // rich azure (methane absorption)
-    color2: [0.06, 0.22, 0.60],    // deep navy band
-    color3: [0.50, 0.70, 0.94],    // bright methane cirrus
+  'neptune-like': { // ★ NEPTUNE — vivid electric blue, dark methane, bright cirrus
+    color1: [0.06, 0.32, 0.90],    // electric azure (methane absorption)
+    color2: [0.02, 0.16, 0.55],    // deep navy-indigo band
+    color3: [0.55, 0.78, 0.98],    // bright white-blue cirrus
     oceanColor: [0, 0, 0], oceanLevel: 0,
-    atmColor: [0.20, 0.45, 0.90], atmThickness: 0.80,
+    atmColor: [0.14, 0.42, 0.94], atmThickness: 0.80,
     emissive: 0, iceCaps: 0, clouds: 0, noiseScale: 2.0,
   },
 
-  'warm-neptune': { // Warmer teal-cyan — heated methane shifts spectra
-    color1: [0.10, 0.54, 0.60],    // warm teal
-    color2: [0.06, 0.36, 0.48],    // deep teal belt
-    color3: [0.30, 0.70, 0.65],    // bright cyan highlight
+  'warm-neptune': { // Warmer teal-cyan — vivid heated methane, emerald shifts
+    color1: [0.06, 0.60, 0.56],    // vivid teal-green
+    color2: [0.02, 0.32, 0.42],    // deep teal-navy belt
+    color3: [0.28, 0.78, 0.68],    // bright emerald highlight
     oceanColor: [0, 0, 0], oceanLevel: 0,
-    atmColor: [0.20, 0.60, 0.68], atmThickness: 0.75,
+    atmColor: [0.16, 0.62, 0.70], atmThickness: 0.75,
     emissive: 0, iceCaps: 0, clouds: 0, noiseScale: 2.0,
   },
 
-  'mini-neptune': { // ★ URANUS-like — pale blue-green ice giant, very uniform
-    color1: [0.44, 0.58, 0.76],    // pale blue-green (Uranus/ice giant)
-    color2: [0.30, 0.44, 0.66],    // subtle darker band
-    color3: [0.62, 0.72, 0.86],    // bright featureless zone
+  'mini-neptune': { // ★ URANUS-like — distinct pale aqua-green, very smooth
+    color1: [0.52, 0.72, 0.78],    // pale aqua-mint (Uranus CH₄ ice)
+    color2: [0.36, 0.52, 0.62],    // subtle teal-grey band
+    color3: [0.68, 0.82, 0.88],    // bright featureless zone
     oceanColor: [0, 0, 0], oceanLevel: 0,
-    atmColor: [0.44, 0.58, 0.82], atmThickness: 0.65,
+    atmColor: [0.48, 0.66, 0.84], atmThickness: 0.65,
     emissive: 0, iceCaps: 0, clouds: 0, noiseScale: 2.5,
   },
 
-  'sub-neptune': { // Transitional — steel-blue haze, muted bands
-    color1: [0.44, 0.50, 0.62],    // steel blue
-    color2: [0.32, 0.38, 0.52],    // dark haze band
-    color3: [0.58, 0.62, 0.72],    // bright zone
+  'sub-neptune': { // Transitional — cool steel-lavender haze, muted but distinct
+    color1: [0.48, 0.48, 0.68],    // steel-lavender zone
+    color2: [0.30, 0.30, 0.50],    // dark purple-grey belt
+    color3: [0.64, 0.62, 0.78],    // bright lavender zone
     oceanColor: [0, 0, 0], oceanLevel: 0,
-    atmColor: [0.44, 0.50, 0.68], atmThickness: 0.55,
+    atmColor: [0.48, 0.48, 0.72], atmThickness: 0.55,
     emissive: 0, iceCaps: 0, clouds: 0, noiseScale: 2.5,
   },
 
@@ -689,6 +690,17 @@ const SURFACES: SurfaceRegime[] = [
   { c1: [0.82, 0.80, 0.76], c2: [0.90, 0.88, 0.85], c3: [0.75, 0.73, 0.70], tempRange: [200, 600], tags: [], rarity: 3 },           // salt crystal
   { c1: [0.75, 0.68, 0.70], c2: [0.82, 0.76, 0.78], c3: [0.68, 0.60, 0.63], tempRange: [20, 100], tags: [], rarity: 3 },            // nitrogen ice
   { c1: [0.32, 0.30, 0.38], c2: [0.42, 0.40, 0.48], c3: [0.56, 0.52, 0.62], tempRange: [0, 1500], tags: [], rarity: 3 },            // metamorphic fold
+  // ── NEW vivid surface regimes (wider color gamut) ──
+  { c1: [0.08, 0.48, 0.42], c2: [0.12, 0.58, 0.52], c3: [0.04, 0.38, 0.32], tempRange: [150, 800], tags: ['metal'], rarity: 3 },  // malachite copper
+  { c1: [0.72, 0.08, 0.32], c2: [0.82, 0.14, 0.38], c3: [0.62, 0.06, 0.26], tempRange: [300, 1500], tags: ['volc'], rarity: 3 },  // ruby volcanic
+  { c1: [0.18, 0.06, 0.42], c2: [0.28, 0.10, 0.52], c3: [0.38, 0.16, 0.62], tempRange: [0, 2000], tags: [], rarity: 3 },          // amethyst
+  { c1: [0.82, 0.78, 0.10], c2: [0.90, 0.86, 0.16], c3: [0.72, 0.68, 0.08], tempRange: [200, 800], tags: ['volc'], rarity: 3 },   // sulfur field
+  { c1: [0.04, 0.24, 0.48], c2: [0.08, 0.32, 0.58], c3: [0.02, 0.18, 0.38], tempRange: [50, 300], tags: [], rarity: 3 },          // cobalt ice
+  { c1: [0.90, 0.52, 0.08], c2: [0.96, 0.62, 0.14], c3: [0.82, 0.44, 0.06], tempRange: [150, 600], tags: ['atm'], rarity: 2 },    // amber sand
+  { c1: [0.50, 0.52, 0.10], c2: [0.58, 0.60, 0.18], c3: [0.42, 0.44, 0.06], tempRange: [0, 1500], tags: [], rarity: 2 },          // lichen green
+  { c1: [0.78, 0.12, 0.08], c2: [0.86, 0.18, 0.12], c3: [0.68, 0.08, 0.06], tempRange: [400, 2000], tags: ['volc'], rarity: 2 },  // cinnabar red
+  { c1: [0.58, 0.56, 0.72], c2: [0.68, 0.66, 0.82], c3: [0.48, 0.46, 0.62], tempRange: [0, 500], tags: [], rarity: 2 },           // lavender ice
+  { c1: [0.88, 0.72, 0.42], c2: [0.94, 0.80, 0.50], c3: [0.80, 0.64, 0.34], tempRange: [250, 450], tags: ['atm'], rarity: 1 },    // warm sandstone
 ];
 
 // ── Slot 2: Atmosphere Characters (11) ──
@@ -721,10 +733,24 @@ const HYDROSPHERES: HydroState[] = [
 
 /** Types where genome should NOT override visuals (highly specific identity) */
 const NO_GENOME = new Set([
-  ...GAS_TYPES,
   'lava-world', 'iron-planet', 'carbon-planet', 'eyeball-world',
   'moon-volcanic', 'moon-magma-ocean', 'moon-carbon-soot',
 ]);
+
+/** Gas giant genome — seed-driven HSV color mutation for band/storm diversity */
+function applyGasGenome(vis: PlanetVisuals, seed: number): void {
+  // Wide hue shift so gas giants of same type look fundamentally different
+  const dh = (genomeHash(seed, 10) - 0.5) * 0.55;
+  const ds = (genomeHash(seed, 11) - 0.5) * 0.42;
+  const dv = (genomeHash(seed, 12) - 0.5) * 0.30;
+  vis.color1 = shiftHSV(vis.color1, dh, ds, dv);
+  vis.color2 = shiftHSV(vis.color2, dh * 0.70, ds * 0.80, dv * 0.65);
+  vis.color3 = shiftHSV(vis.color3, dh * 0.45, ds * 0.55, dv * 0.35);
+  // Atmosphere color mutation
+  const adh = (genomeHash(seed, 13) - 0.5) * 0.32;
+  const ads = (genomeHash(seed, 14) - 0.5) * 0.28;
+  vis.atmColor = shiftHSV(vis.atmColor as [number, number, number], adh, ads, 0);
+}
 
 /** Shift an RGB color in HSV space */
 function shiftHSV(rgb: [number, number, number], dh: number, ds: number, dv: number): [number, number, number] {
@@ -778,10 +804,10 @@ function applyWorldGenome(vis: PlanetVisuals, seed: number, temp: number, mass: 
     vis.color3[2] * (1 - blend) + surface.c3[2] * blend,
   ];
 
-  // Per-world HSV shift for intra-regime variation (larger shifts = more diversity)
-  const dh = (genomeHash(seed, 4) - 0.5) * 0.35;
-  const ds = (genomeHash(seed, 5) - 0.5) * 0.30;
-  const dv = (genomeHash(seed, 6) - 0.5) * 0.22;
+  // Per-world HSV shift for intra-regime variation (WIDE shifts = strong diversity)
+  const dh = (genomeHash(seed, 4) - 0.5) * 0.50;
+  const ds = (genomeHash(seed, 5) - 0.5) * 0.45;
+  const dv = (genomeHash(seed, 6) - 0.5) * 0.30;
   vis.color1 = shiftHSV(vis.color1, dh, ds, dv);
   vis.color2 = shiftHSV(vis.color2, dh * 0.8, ds * 0.8, dv * 0.8);
   vis.color3 = shiftHSV(vis.color3, dh * 0.5, ds * 0.6, dv * 0.4);
@@ -827,7 +853,7 @@ varying vec3 vNormal;
 varying vec3 vViewDir;
 varying float vFresnel;
 
-/* ── Inline noise for vertex displacement ── */
+/* -- Inline noise for vertex displacement -- */
 float vHash(vec3 p) {
   p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
   p *= 17.0;
@@ -835,7 +861,7 @@ float vHash(vec3 p) {
 }
 float vNoise(vec3 x) {
   vec3 i = floor(x); vec3 f = fract(x);
-  f = f * f * (3.0 - 2.0 * f);
+  f = f*f*f*(f*(f*6.0-15.0)+10.0); // quintic — matches FRAG for consistent terrain
   return mix(
     mix(mix(vHash(i), vHash(i+vec3(1,0,0)), f.x),
         mix(vHash(i+vec3(0,1,0)), vHash(i+vec3(1,1,0)), f.x), f.y),
@@ -892,7 +918,8 @@ void main() {
     float disp = (terrain - 0.5) * uDisplacement;
     displaced = position + dir * disp;
   }
-  vNormal = normalize(normalMatrix * normal);
+  // World-space normal so lighting matches world-space uSunDir & vViewDir
+  vNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
   vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
   vViewDir = normalize(cameraPosition - worldPos.xyz);
   vFresnel = 1.0 - max(dot(vNormal, vViewDir), 0.0);
@@ -903,10 +930,13 @@ void main() {
 const FRAG = /* glsl */ `
 precision highp float;
 
+// =============================================================
+// ProceduralPlanet FRAG v3 -- Tectonic plates, pole-free noise,
+// heightmap water, dual clouds, texture-informed biomes
+// =============================================================
+
 uniform float uTime;
-uniform vec3  uColor1;
-uniform vec3  uColor2;
-uniform vec3  uColor3;
+uniform vec3  uColor1, uColor2, uColor3;
 uniform vec3  uOceanColor;
 uniform float uOceanLevel;
 uniform vec3  uAtmColor;
@@ -927,1178 +957,932 @@ uniform float uIsIceWorld;
 uniform float uTerrainAge;
 uniform float uTectonics;
 uniform vec3  uFoliageColor;
-
-// ── Tidal lock + temperature distribution ──
 uniform float uTidallyLocked;
 uniform float uSpinOrbit32;
 uniform float uShowTempMap;
-uniform float uSubstellarTemp;
-uniform float uAntistellarTemp;
-uniform float uEquatorTemp;
-uniform float uPolarTemp;
+uniform float uSubstellarTemp, uAntistellarTemp, uEquatorTemp, uPolarTemp;
 uniform float uHeatRedist;
-// Storm system
-uniform float uStormLat;
-uniform float uStormLon;
-uniform float uStormSize;
-uniform float uStormIntensity;
-// Mineral overlay
+uniform float uStormLat, uStormLon, uStormSize, uStormIntensity;
 uniform float uShowMineralMap;
-uniform float uIronPct;
-uniform float uSilicatePct;
-uniform float uWaterIcePct;
-uniform float uKreepIndex;
-uniform float uCarbonPct;
+uniform float uIronPct, uSilicatePct, uWaterIcePct, uKreepIndex, uCarbonPct;
+uniform vec3  uPlanetShineColor;
+uniform sampler2D uTexLow, uTexMid, uTexHigh;
+uniform float uTexInfluence, uTriplanarScale;
 
 varying vec3  vObjPos;
 varying vec3  vNormal;
 varying vec3  vViewDir;
 varying float vFresnel;
 
-/* ── 3D value noise ── */
-float hash(vec3 p) {
-  p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
-  p *= 17.0;
-  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+// =============================================================
+// NOISE CORE -- gradient noise, NO pole pinching (all 3D)
+// =============================================================
+vec3 hash33(vec3 p) {
+  p = vec3(dot(p, vec3(127.1,311.7,74.7)),
+           dot(p, vec3(269.5,183.3,246.1)),
+           dot(p, vec3(113.5,271.9,124.6)));
+  return -1.0 + 2.0 * fract(sin(p) * 43758.5453);
 }
-
-float noise3D(vec3 x) {
-  vec3 i = floor(x);
-  vec3 f = fract(x);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(
-    mix(mix(hash(i),              hash(i + vec3(1,0,0)), f.x),
-        mix(hash(i + vec3(0,1,0)),hash(i + vec3(1,1,0)), f.x), f.y),
-    mix(mix(hash(i + vec3(0,0,1)),hash(i + vec3(1,0,1)), f.x),
-        mix(hash(i + vec3(0,1,1)),hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+float noise3D(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  vec3 u = f*f*f*(f*(f*6.0-15.0)+10.0); // quintic for C2-smooth transitions
+  return mix(mix(mix(dot(hash33(i),f),
+    dot(hash33(i+vec3(1,0,0)),f-vec3(1,0,0)),u.x),
+    mix(dot(hash33(i+vec3(0,1,0)),f-vec3(0,1,0)),
+    dot(hash33(i+vec3(1,1,0)),f-vec3(1,1,0)),u.x),u.y),
+    mix(mix(dot(hash33(i+vec3(0,0,1)),f-vec3(0,0,1)),
+    dot(hash33(i+vec3(1,0,1)),f-vec3(1,0,1)),u.x),
+    mix(dot(hash33(i+vec3(0,1,1)),f-vec3(0,1,1)),
+    dot(hash33(i+vec3(1,1,1)),f-vec3(1,1,1)),u.x),u.y),u.z)*0.5+0.5;
 }
-
-float fbm(vec3 p) {
-  float f = 0.0, amp = 0.5;
-  for (int i = 0; i < 6; i++) { f += amp * noise3D(p); p *= 2.03; amp *= 0.48; }
-  return f;
+float fbm5(vec3 p) {
+  float v = 0.0, a = 0.5;
+  for(int i=0;i<6;i++){v+=a*noise3D(p);p=p*2.03+31.97;a*=0.48;}
+  return v;
 }
-
-/* ── Domain warp for richer features ── */
-float warpedFbm(vec3 p) {
-  vec3 q = vec3(fbm(p), fbm(p + vec3(5.2, 1.3, 2.8)), fbm(p + vec3(1.7, 9.2, 3.4)));
-  return fbm(p + q * 1.5);
+float fbm3(vec3 p) {
+  float v = 0.0, a = 0.5;
+  for(int i=0;i<3;i++){v+=a*noise3D(p);p=p*2.03+31.97;a*=0.49;}
+  return v;
 }
-
-/* ── Voronoi for impact crater placement ── */
-vec2 voronoi3D(vec3 p) {
-  vec3 i = floor(p);
-  vec3 f = fract(p);
-  float md = 1e5, cid = 0.0;
-  for (int x = -1; x <= 1; x++)
-  for (int y = -1; y <= 1; y++)
-  for (int z = -1; z <= 1; z++) {
-    vec3 nb = vec3(float(x), float(y), float(z));
-    vec3 id = i + nb;
-    vec3 pt = nb + vec3(hash(id), hash(id + 71.0), hash(id + 113.0)) * 0.76 + 0.12 - f;
-    float d = dot(pt, pt);
-    if (d < md) { md = d; cid = hash(id + 37.0); }
+float ridgedFbm(vec3 p) {
+  float v = 0.0, a = 0.5;
+  for(int i=0;i<4;i++){
+    float n=abs(noise3D(p)*2.0-1.0);n=1.0-n;n=n*n;
+    v+=a*n;p=p*2.1+17.3;a*=0.45;
   }
-  return vec2(sqrt(md), cid);
+  return v;
 }
 
-/* ── Voronoi returning nearest + 2nd-nearest cells ── */
-vec4 voronoi3D_dual(vec3 p) {
-  vec3 i = floor(p);
-  vec3 f = fract(p);
-  float md1 = 1e5, cid1 = 0.0;
-  float md2 = 1e5, cid2 = 0.0;
-  for (int x = -1; x <= 1; x++)
-  for (int y = -1; y <= 1; y++)
-  for (int z = -1; z <= 1; z++) {
-    vec3 nb = vec3(float(x), float(y), float(z));
-    vec3 id = i + nb;
-    vec3 pt = nb + vec3(hash(id), hash(id + 71.0), hash(id + 113.0)) * 0.76 + 0.12 - f;
-    float d = dot(pt, pt);
-    if (d < md1) {
-      md2 = md1; cid2 = cid1;
-      md1 = d; cid1 = hash(id + 37.0);
-    } else if (d < md2) {
-      md2 = d; cid2 = hash(id + 37.0);
-    }
+// =============================================================
+// VORONOI TECTONIC PLATES -- discrete biome regions
+// Returns (cellDist, cellEdgeDist, cellID hash)
+// =============================================================
+vec3 voronoiPlates(vec3 p, float sc) {
+  vec3 pp = p * sc;
+  vec3 i = floor(pp), f = fract(pp);
+  float d1 = 2.0, d2 = 2.0;
+  float cellId = 0.0;
+  // 3x3x3 neighbor search (27 iterations) — proper nearest-cell Voronoi
+  for(int x=-1;x<=1;x++)
+    for(int y=-1;y<=1;y++)
+      for(int z=-1;z<=1;z++){
+        vec3 g = vec3(float(x),float(y),float(z));
+        vec3 o = fract(sin(vec3(
+          dot(i+g,vec3(127.1,311.7,74.7)),
+          dot(i+g,vec3(269.5,183.3,246.1)),
+          dot(i+g,vec3(113.5,271.9,124.6))))*43758.5453)*0.75+0.125;
+        float dd = length(g+o-f);
+        if(dd < d1){ d2=d1; d1=dd;
+          cellId = fract(sin(dot(i+g,vec3(7.13,157.9,113.2)))*43758.5453);
+        } else if(dd < d2){ d2=dd; }
+      }
+  return vec3(d1, d2-d1, cellId);
+}
+
+// =============================================================
+// TERRAIN HEIGHT -- domain-warped with tectonic plates
+// =============================================================
+float terrainHeight(vec3 pos) {
+  float sc = uNoiseScale;
+  // Domain warp for organic continental shapes
+  vec3 q = vec3(fbm3(pos*sc + uSeed),
+                fbm3(pos*sc + uSeed + vec3(5.2,1.3,3.7)),
+                fbm3(pos*sc + uSeed + vec3(9.1,4.8,7.2)));
+  vec3 r = vec3(fbm3(pos*sc + q*3.5 + uSeed + vec3(1.7,8.2,2.1)),
+                fbm3(pos*sc + q*3.5 + uSeed + vec3(6.3,3.1,5.8)),
+                0.0);
+  float h = fbm5(pos*sc + r*2.0 + uSeed);
+
+  // Tectonic plate influence: raise/lower entire plate regions
+  if(uTectonics > 0.02) {
+    vec3 vp = voronoiPlates(pos, sc * 0.7 + uSeed * 0.01);
+    float plateH = fract(vp.z * 7.13) * 0.4 - 0.15; // plate altitude bias
+    // Noise-modulated edge width for organic plate boundaries in height too
+    float edgeNoise = noise3D(pos * 8.0 + uSeed * 2.7) * 0.5 + 0.5;
+    float edgeWidth = mix(0.04, 0.14, edgeNoise);
+    float edgeBreak = smoothstep(0.25, 0.45, noise3D(pos * 3.2 + uSeed * 5.1));
+    float edge = smoothstep(0.0, edgeWidth, vp.y);
+    float edgeMask = (1.0 - edge) * edgeBreak;
+    h += plateH * uTectonics * 0.25;
+    // Mountain ridges at plate boundaries (subduction zones)
+    h += edgeMask * uTectonics * 0.12;
+    // Rift valleys at some boundaries
+    float riftBias = fract(vp.z * 13.7);
+    if(riftBias > 0.6)
+      h -= edgeMask * uTectonics * 0.08;
   }
-  return vec4(sqrt(md1), cid1, sqrt(md2), cid2);
-}
 
-/* ── Domain-warped dual voronoi for organic biome boundaries ── */
-/* Returns vec4(d1, id1, d2, id2): nearest + 2nd-nearest cells.
-   FBM domain warping bends cell edges into natural continent shapes. */
-vec4 biomeVoronoi(vec3 p) {
-  vec3 warp = vec3(
-    fbm(p * 0.8 + vec3(0.0, 3.1, 7.4)),
-    fbm(p * 0.8 + vec3(5.2, 1.3, 2.8)),
-    fbm(p * 0.8 + vec3(1.7, 9.2, 3.4))
-  );
-  vec3 wp = p + warp * 0.55;
-  return voronoi3D_dual(wp * 1.6);
-}
+  // Mountain ridges
+  if(uMountainHeight > 0.01)
+    h += ridgedFbm(pos*sc*2.0 + uSeed + 200.0) * uMountainHeight * 0.30;
 
-/* ── Biome classification from cell hash ID ── */
-float classifyBiome(float id) {
-  float bh = fract(id * 7.7 + 0.13);
-  if (bh > 0.85)      return 2.0;
-  else if (bh > 0.70) return 4.0;
-  else if (bh > 0.52) return 1.0;
-  else if (bh > 0.35) return 0.0;
-  else if (bh > 0.18) return 3.0;
-  else                 return 5.0;
-}
+  // Valley carving
+  if(uValleyDepth > 0.01)
+    h -= smoothstep(0.45,0.55,fbm3(pos*sc*1.5+uSeed+300.0)) * uValleyDepth * 0.15;
 
-/* ── Per-biome terrain multipliers ── */
-void biomeTerrainMults(float b, out float mc, out float mm, out float mv, out float mf) {
-  if (b < 0.5)      { mc=0.25; mm=0.12; mv=0.15; mf=0.05; }
-  else if (b < 1.5) { mc=0.45; mm=2.80; mv=2.00; mf=0.15; }
-  else if (b < 2.5) { mc=0.10; mm=0.70; mv=0.40; mf=4.00; }
-  else if (b < 3.5) { mc=0.20; mm=0.08; mv=0.10; mf=0.06; }
-  else if (b < 4.5) { mc=0.35; mm=1.00; mv=3.50; mf=0.25; }
-  else              { mc=0.75; mm=0.55; mv=0.35; mf=0.12; }
-}
+  // Craters (3D Voronoi bowl+rim)
+  if(uCraterDensity > 0.01) {
+    vec3 cp = pos*sc*3.0 + uSeed;
+    vec3 ci = floor(cp), cf = fract(cp);
+    float md = 1.0;
+    // 3x3x3 crater search — proper nearest-cell detection
+    for(int x=-1;x<=1;x++)
+      for(int y=-1;y<=1;y++)
+        for(int z=-1;z<=1;z++){
+          vec3 g = vec3(float(x),float(y),float(z));
+          vec3 o = fract(sin(vec3(
+            dot(ci+g,vec3(127.1,311.7,74.7)),
+            dot(ci+g,vec3(269.5,183.3,246.1)),
+            dot(ci+g,vec3(113.5,271.9,124.6))))*43758.5453)*0.5+0.25;
+          md = min(md, length(g+o-cf));
+        }
+    h -= (1.0-smoothstep(0.0,0.18,md)) * uCraterDensity * 0.10;
+    h += smoothstep(0.16,0.22,md)*(1.0-smoothstep(0.22,0.30,md)) * uCraterDensity * 0.03;
+  }
 
-/* ── Per-biome color palette ── */
-void biomePalette(float b, out vec3 c1, out vec3 c2, out vec3 c3) {
-  if (b < 0.5)      { c1=vec3(0.74,0.58,0.30); c2=vec3(0.62,0.46,0.22); c3=vec3(0.84,0.74,0.52); }
-  else if (b < 1.5) { c1=vec3(0.44,0.41,0.37); c2=vec3(0.34,0.32,0.29); c3=vec3(0.82,0.80,0.78); }
-  else if (b < 2.5) { c1=vec3(0.16,0.12,0.10); c2=vec3(0.10,0.07,0.05); c3=vec3(0.22,0.16,0.12); }
-  else if (b < 3.5) { c1=vec3(0.15,0.13,0.12); c2=vec3(0.21,0.19,0.17); c3=vec3(0.28,0.25,0.22); }
-  else if (b < 4.5) { c1=vec3(0.52,0.38,0.22); c2=vec3(0.40,0.28,0.16); c3=vec3(0.64,0.52,0.36); }
-  else              { c1=vec3(0.56,0.50,0.40); c2=vec3(0.48,0.43,0.34); c3=vec3(0.70,0.65,0.56); }
-}
+  // Volcanism
+  if(uVolcanism > 0.01)
+    h += smoothstep(0.62,0.82,fbm3(pos*sc*0.8+uSeed+500.0)) * uVolcanism * 0.18;
 
-/* ── Vegetation suppression per biome ── */
-float biomeVegSuppress(float b) {
-  if (b < 0.5) return 0.06;
-  if (b > 1.5 && b < 2.5) return 0.0;
-  if (b > 2.5 && b < 3.5) return 0.30;
-  if (b > 0.5 && b < 1.5) return 0.45;
-  return 1.0;
-}
+  // Cracks — domain-warped for organic, meandering paths
+  if(uCrackIntensity > 0.01) {
+    // Warp the crack coordinate for natural-looking paths
+    vec3 crWarp = pos*sc*3.5 + uSeed + 400.0;
+    crWarp += vec3(noise3D(pos*sc*1.8+uSeed+410.0),
+                   noise3D(pos*sc*1.8+uSeed+420.0),
+                   noise3D(pos*sc*1.8+uSeed+430.0)) * 0.35;
+    float cr = abs(noise3D(crWarp)*2.0-1.0);
+    // Wider smoothstep + noise-varied width for organic cracks
+    float crWidth = 0.06 + noise3D(pos*sc*2.0+uSeed+440.0) * 0.05;
+    // Some cracks fade out (breakup)
+    float crBreak = smoothstep(0.2, 0.5, noise3D(pos*sc*1.2+uSeed+450.0));
+    h -= (1.0-smoothstep(0.0, crWidth, cr)) * uCrackIntensity * 0.06 * crBreak;
+  }
 
-float craterBowl(float d, float R) {
-  float t = d / R;
-  if (t > 1.6) return 0.0;
-  // Deep bowl with flat floor
-  float bowl = (1.0 - smoothstep(0.0, 0.80, t)) * -1.0;
-  float flatFloor = smoothstep(0.0, 0.20, t);
-  // Raised rim with ejecta blanket
-  float rim = exp(-((t - 1.0) * (t - 1.0)) / 0.02) * 0.55;
-  float ejecta = exp(-((t - 1.3) * (t - 1.3)) / 0.06) * 0.18;
-  // Central peak for large craters
-  float peak = exp(-(t * t) / 0.005) * 0.25 * step(0.25, R);
-  // Terraced walls inside the bowl
-  float terrace = sin(t * 12.0) * 0.03 * (1.0 - smoothstep(0.7, 1.0, t)) * step(0.22, R);
-  return (bowl * flatFloor + rim + ejecta + peak + terrace) * 0.40;
-}
-
-float craterField(vec3 pos, float density, float seed) {
-  vec3 sp = pos + vec3(seed, seed * 0.73, seed * 1.37);
-  float h = 0.0;
-  // Giant basin impacts
-  vec2 v1 = voronoi3D(sp * 4.0);
-  if (v1.y < density * 0.6) h += craterBowl(v1.x, 0.32 + v1.y * 0.25);
-  // Large craters
-  vec2 v2 = voronoi3D(sp * 10.0 + 100.0);
-  if (v2.y < density) h += craterBowl(v2.x, 0.20 + v2.y * 0.16) * 0.55;
-  // Medium craters
-  vec2 v3 = voronoi3D(sp * 22.0 + 200.0);
-  if (v3.y < density * 0.7) h += craterBowl(v3.x, 0.14 + v3.y * 0.10) * 0.32;
-  // Small craters
-  vec2 v4 = voronoi3D(sp * 48.0 + 300.0);
-  if (v4.y < density * 0.5) h += craterBowl(v4.x, 0.08 + v4.y * 0.06) * 0.18;
+  // Age: young=smooth, old=rough
+  h = mix(h, h*0.7+0.15, (1.0-uTerrainAge)*0.3);
   return h;
 }
 
-/* ── Ridge / crack pattern for icy moons ── */
-float crackPattern(vec3 pos, float intensity, float seed) {
-  vec3 q = pos * 6.0;
-  q += vec3(fbm(q + seed), fbm(q + seed + 20.0), fbm(q + seed + 40.0)) * 0.8;
-  float r1 = 1.0 - abs(fbm(q) * 2.0 - 1.0);
-  float r2 = 1.0 - abs(fbm(q * 2.3 + 10.0) * 2.0 - 1.0);
-  r1 = pow(r1, 4.0);
-  r2 = pow(r2, 4.0);
-  return (r1 * 0.65 + r2 * 0.35) * intensity;
+// =============================================================
+// TRIPLANAR TEXTURE -- no pole pinching
+// =============================================================
+vec3 triplanarSample(sampler2D tex, vec3 p, vec3 n, float sc) {
+  vec3 bl = abs(n); bl = pow(bl,vec3(8.0)); bl /= dot(bl,vec3(1.0));
+  // Offset each projection plane slightly to break up tiling repetition
+  vec2 uvYZ = p.yz * sc + vec2(0.37, 0.13);
+  vec2 uvXZ = p.xz * sc + vec2(0.71, 0.59);
+  vec2 uvXY = p.xy * sc + vec2(0.23, 0.47);
+  return texture2D(tex, uvYZ).rgb * bl.x
+       + texture2D(tex, uvXZ).rgb * bl.y
+       + texture2D(tex, uvXY).rgb * bl.z;
 }
 
-/* ── Ridged FBM for mountain ranges ── */
-float ridgedFbm(vec3 p) {
-  float f = 0.0, amp = 0.5;
-  for (int i = 0; i < 5; i++) {
-    float n = abs(noise3D(p) * 2.0 - 1.0);
-    n = 1.0 - n;           // peaks at fold lines
-    n = n * n;              // sharpen ridges
-    f += amp * n;
-    p *= 2.12;
-    amp *= 0.46;
+// =============================================================
+// CLOUD ROTATION -- latitude-aware, avoids pole pinch
+// =============================================================
+vec3 cloudWarp(vec3 p, float speed) {
+  // Rotate around Y axis proportional to cos(lat) -- no pole pinch
+  float lat = asin(clamp(p.y, -1.0, 1.0));
+  float windSpeed = speed * cos(lat); // zero speed at poles
+  float angle = windSpeed * uTime;
+  float c = cos(angle), s = sin(angle);
+  return vec3(p.x*c - p.z*s, p.y, p.x*s + p.z*c);
+}
+
+// =============================================================
+// GAS GIANT
+// =============================================================
+vec3 gasGiantColor(vec3 pos) {
+  float lat = pos.y;
+  float seed = uSeed;
+  float bf = 8.0 + sin(seed*7.13)*4.0;
+
+  // Animated latitude-differential zonal wind (visible band drift)
+  float windAngle = cos(asin(clamp(lat,-1.0,1.0))) * uTime * 0.12;
+  vec3 wpos = vec3(
+    pos.x * cos(windAngle) - pos.z * sin(windAngle),
+    pos.y,
+    pos.x * sin(windAngle) + pos.z * cos(windAngle));
+
+  // Temporal turbulence evolution — bands shift and churn over time
+  float tEvol = uTime * 0.04;
+  vec3 evolOffset = vec3(sin(tEvol*0.7)*0.3, 0.0, cos(tEvol*1.1)*0.3);
+
+  float bands = sin(lat*bf + fbm3(wpos*3.0+seed+evolOffset)*1.8);
+  float bands2 = sin(lat*bf*2.3+1.0 + fbm3(wpos*5.0+seed+80.0+evolOffset*0.7)*0.9);
+  float turb = fbm5(wpos*6.0 + vec3(0,tEvol*0.5,seed+100.0));
+  float turbFine = fbm3(wpos*14.0 + vec3(0,tEvol*0.8,seed+200.0));
+  float shear = noise3D(vec3(lat*5.0, uTime*0.05, seed))*0.3;
+
+  // [27] Chevron / festoon patterns at band boundaries
+  float bandEdge = abs(fract(lat*bf*0.5/(3.14159*2.0)+0.5)-0.5)*2.0;
+  float chevronZone = smoothstep(0.0, 0.15, bandEdge) * (1.0 - smoothstep(0.15, 0.35, bandEdge));
+  float lon = atan(wpos.z, wpos.x);
+  float chevron = sin(lon * 12.0 + lat * 25.0 + turb * 8.0 + uTime * 0.25) * 0.5 + 0.5;
+  float chevronFine = sin(lon * 20.0 - lat * 18.0 + turbFine * 6.0 + uTime * 0.35) * 0.3 + 0.5;
+  float festoon = chevronZone * (chevron * 0.6 + chevronFine * 0.4);
+
+  float bandMix = bands*0.55 + bands2*0.30 + shear;
+  bandMix += (turb-0.5)*0.50 + (turbFine-0.5)*0.22;
+  bandMix += festoon * 0.30;
+
+  // Belt/zone color contrast — belts darker, zones brighter
+  float beltZone = sin(lat*bf*0.5)*0.5+0.5;
+  vec3 beltCol = uColor1 * 0.50;  // darker belts — deep contrast
+  vec3 zoneCol = uColor2 * 1.40;  // brighter zones — vivid
+
+  vec3 col = mix(beltCol, zoneCol, beltZone*0.50+0.20);
+  col = mix(col, mix(uColor1, uColor2, smoothstep(-0.8,0.8,bandMix)), 0.40);
+  col = mix(col, uColor3, smoothstep(0.55,0.72,turb)*0.40);
+
+  // Great storm vortex — more prominent with visible rotation
+  float sLat = 0.35 + sin(seed*3.14)*0.2;
+  float sLon = seed * 1.618 + uTime * 0.07; // storm drifts in longitude
+  vec3 sc = vec3(cos(sLon)*cos(sLat), sin(sLat), sin(sLon)*cos(sLat));
+  float sd = length(pos - sc);
+  float sm = 1.0 - smoothstep(0.0, 0.28, sd);
+  if(sm > 0.001) {
+    float ang = atan(pos.z-sc.z, pos.x-sc.x);
+    float spiral = sin(ang*4.0+sd*22.0+uTime*0.70)*0.5+0.5;
+    float spiralFine = sin(ang*8.0+sd*40.0+uTime*0.50)*0.3+0.5;
+    vec3 stormCol = mix(uColor3,vec3(1,0.92,0.82),spiral*0.35+spiralFine*0.15);
+    col = mix(col, stormCol, sm*0.75);
   }
-  return f;
-}
+  // Secondary storm
+  float s2Lat = -0.20+sin(seed*5.67)*0.15;
+  float s2Lon = seed*2.71 + uTime*0.05;
+  vec3 sc2 = vec3(cos(s2Lon)*cos(s2Lat),sin(s2Lat),sin(s2Lon)*cos(s2Lat));
+  col = mix(col, uColor3*1.1, (1.0-smoothstep(0.0,0.14,length(pos-sc2)))*0.55);
 
-float mountainRidges(vec3 pos, float height, float seed) {
-  if (height < 0.01) return 0.0;
-  vec3 p = pos * 4.0 + seed * 13.7;
-  // Domain warp for natural-looking ranges
-  p += vec3(noise3D(p * 0.7) * 1.5, noise3D(p * 0.7 + 31.0) * 1.5, noise3D(p * 0.7 + 67.0) * 1.5);
-  float ridges = ridgedFbm(p);
-  // Regional mask: mountains only in some areas
-  float mask = smoothstep(0.38, 0.60, noise3D(pos * 2.0 + seed + 77.0));
-  return ridges * mask * height * 0.45;
-}
-
-/* ── Rift valleys & canyon networks ── */
-float valleyCarve(vec3 pos, float depth, float seed) {
-  if (depth < 0.01) return 0.0;
-  vec3 p = pos * 3.0 + seed * 9.3;
-  // Domain warp
-  p += vec3(noise3D(p + 30.0), noise3D(p + 50.0), noise3D(p + 70.0)) * 0.8;
-  // Sharp valleys from absolute value noise
-  float v = abs(noise3D(p * 3.0) * 2.0 - 1.0);
-  v = min(v, abs(noise3D(p * 5.5 + 11.0) * 2.0 - 1.0));
-  v = pow(v, 0.6);         // sharpen
-  v = 1.0 - v;             // invert: valleys are negative
-  // Regional mask
-  float mask = smoothstep(0.38, 0.58, noise3D(pos * 1.5 + seed + 99.0));
-  return -v * mask * depth * 0.30;
-}
-
-/* ── Volcanic cones & calderas ── */
-float volcanicCone(float d, float R) {
-  float t = d / R;
-  if (t > 2.0) return 0.0;
-  // Shield volcano: broad base, steep near summit
-  float cone = 1.0 - smoothstep(0.0, 1.5, t);
-  cone = pow(cone, 1.8) * 0.50;
-  // Caldera depression at summit
-  float caldera = exp(-(t * t) / 0.012) * 0.20;
-  return cone - caldera;
-}
-
-float volcanicField(vec3 pos, float volcanism, float seed) {
-  if (volcanism < 0.01) return 0.0;
-  vec3 sp = pos + vec3(seed * 1.1, seed * 0.57, seed * 1.83);
-  float h = 0.0;
-  // Sparse large shield volcanoes
-  vec2 v1 = voronoi3D(sp * 3.5);
-  if (v1.y < volcanism * 0.35) h += volcanicCone(v1.x, 0.35 + v1.y * 0.15);
-  // Medium volcanic peaks
-  vec2 v2 = voronoi3D(sp * 7.0 + 150.0);
-  if (v2.y < volcanism * 0.5) h += volcanicCone(v2.x, 0.22 + v2.y * 0.12) * 0.55;
-  return h * volcanism;
-}
-
-/* ── Temperature map coloring — maps temperature K to thermal palette ── */
-vec3 tempToColor(float tempK) {
-  // Scientific thermal palette: blue(40K) → cyan(150K) → green(250K) → yellow(320K) → orange(500K) → red(1000K) → white(2000K+)
-  if (tempK < 80.0)   return mix(vec3(0.05, 0.05, 0.2), vec3(0.1, 0.2, 0.6), tempK / 80.0);
-  if (tempK < 180.0)  return mix(vec3(0.1, 0.2, 0.6), vec3(0.1, 0.5, 0.6), (tempK - 80.0) / 100.0);
-  if (tempK < 280.0)  return mix(vec3(0.1, 0.5, 0.6), vec3(0.2, 0.7, 0.2), (tempK - 180.0) / 100.0);
-  if (tempK < 350.0)  return mix(vec3(0.2, 0.7, 0.2), vec3(0.8, 0.7, 0.1), (tempK - 280.0) / 70.0);
-  if (tempK < 600.0)  return mix(vec3(0.8, 0.7, 0.1), vec3(0.9, 0.3, 0.05), (tempK - 350.0) / 250.0);
-  if (tempK < 1500.0) return mix(vec3(0.9, 0.3, 0.05), vec3(1.0, 0.1, 0.05), (tempK - 600.0) / 900.0);
-  return mix(vec3(1.0, 0.1, 0.05), vec3(1.0, 0.9, 0.8), min((tempK - 1500.0) / 2000.0, 1.0));
-}
-
-/* ── Compute surface temperature at a given position ── */
-float surfaceTemp(vec3 pos, vec3 sunDir) {
-  if (uTidallyLocked > 0.5) {
-    if (uSpinOrbit32 > 0.5) {
-      // 3:2 resonance — two "hot longitudes" 180° apart
-      float lon = atan(pos.z, pos.x);
-      float hotPhase = cos(lon * 2.0) * 0.5 + 0.5; // peaks at 0° and 180°
-      float lat = abs(pos.y);
-      float latFade = 1.0 - lat * 0.4;
-      return mix(uAntistellarTemp, uSubstellarTemp, hotPhase * latFade);
-    } else {
-      // 1:1 synchronous — substellar point always faces star
-      float facing = dot(pos, sunDir);  // -1 (anti) to +1 (sub)
-      float t = facing * 0.5 + 0.5;    // 0 (anti) to 1 (sub)
-      // smooth transition through terminator
-      float tSmooth = smoothstep(0.0, 1.0, t);
-      // atmospheric redistribution softens contrast
-      tSmooth = mix(tSmooth, 0.5, uHeatRedist * 0.7);
-      return mix(uAntistellarTemp, uSubstellarTemp, tSmooth);
-    }
-  } else {
-    // Free rotator — latitudinal gradient (equator to pole)
-    float lat = abs(pos.y);
-    float latT = smoothstep(0.0, 0.85, lat);
-    return mix(uEquatorTemp, uPolarTemp, latT);
-  }
-}
-
-/* ── Substellar storm (tidally locked worlds) ── */
-float tidalStorm(vec3 pos, vec3 sunDir, float time) {
-  if (uStormIntensity < 0.01) return 0.0;
-  // Storm center at substellar point
-  float stormAngle = acos(clamp(dot(pos, sunDir), -1.0, 1.0));
-  float stormRadius = radians(uStormSize);
-  float stormMask = 1.0 - smoothstep(stormRadius * 0.3, stormRadius, stormAngle);
-  // Spiral arms
-  float lon = atan(pos.z, pos.x);
-  float lat = asin(clamp(pos.y, -1.0, 1.0));
-  float spiral = sin(stormAngle * 15.0 - lon * 3.0 + time * 0.3 + lat * 2.0) * 0.5 + 0.5;
-  float arms = smoothstep(0.25, 0.65, spiral) * stormMask;
-  // Turbulent eye wall
-  float eyewall = smoothstep(stormRadius * 0.08, stormRadius * 0.18, stormAngle) *
-                  (1.0 - smoothstep(stormRadius * 0.18, stormRadius * 0.35, stormAngle));
-  float turbulence = fbm(pos * 12.0 + vec3(time * 0.08, 0.0, 0.0)) * eyewall;
-  return (arms * 0.6 + stormMask * 0.25 + turbulence * 0.35) * uStormIntensity;
-}
-
-/* ── Mineral overlay coloring ── */
-vec3 mineralColor(vec3 pos) {
-  // Procedural mineral distribution using voronoi + noise
-  vec3 sp = pos * 6.0 + uSeed * 0.5;
-  vec2 v = voronoi3D(sp);
-  float n = fbm(sp * 2.0);
-
-  // Iron deposits (red) — concentrated in lower elevations, near volcanic regions
-  float ironWeight = uIronPct / 100.0;
-  float ironZone = smoothstep(0.3, 0.7, n) * ironWeight;
-
-  // Silicate regions (yellow/tan) — dominant in highlands
-  float silWeight = uSilicatePct / 100.0;
-  float silZone = smoothstep(0.2, 0.6, 1.0 - n) * silWeight;
-
-  // Water ice (blue) — polar and high elevation
-  float iceWeight = uWaterIcePct / 100.0;
-  float lat = abs(pos.y);
-  float iceZone = smoothstep(0.3, 0.8, lat + n * 0.3) * iceWeight;
-
-  // KREEP terranes (magenta) — localized deposits
-  float kreepZone = 0.0;
-  if (uKreepIndex > 0.1) {
-    float kv = voronoi3D(sp * 1.8 + 77.0).x;
-    kreepZone = (1.0 - smoothstep(0.0, 0.15, kv)) * uKreepIndex;
-  }
-
-  // Carbon deposits (dark gray-brown)
-  float carbonZone = 0.0;
-  if (uCarbonPct > 1.0) {
-    carbonZone = smoothstep(0.4, 0.8, fbm(sp * 3.0 + 50.0)) * uCarbonPct / 100.0;
-  }
-
-  // Compose mineral overlay
-  vec3 col = vec3(0.15, 0.15, 0.18);  // base dark
-  col = mix(col, vec3(0.9, 0.2, 0.1), ironZone);    // iron = red
-  col = mix(col, vec3(0.85, 0.75, 0.3), silZone);    // silicate = yellow
-  col = mix(col, vec3(0.2, 0.5, 0.95), iceZone);     // water = blue
-  col = mix(col, vec3(0.8, 0.15, 0.7), kreepZone);   // KREEP = magenta
-  col = mix(col, vec3(0.25, 0.22, 0.18), carbonZone); // carbon = dark brown
   return col;
 }
 
+// =============================================================
+// MAIN
+// =============================================================
 void main() {
-  vec3 pos = normalize(vObjPos);
   vec3 N = normalize(vNormal);
-  vec3 L = normalize(uSunDir);
   vec3 V = normalize(vViewDir);
-  vec3 H = normalize(L + V);
-  float NdotL = max(dot(N, L), 0.0);
-  float rim = vFresnel;
+  vec3 L = normalize(uSunDir);
+  vec3 pos = normalize(vObjPos);
+  vec3 H = normalize(L+V);
+  float rim = 1.0 - max(dot(N,V),0.0);
 
   vec3 finalColor;
 
-  if (uIsGas > 0.5) {
-    // ════════════════════════════════════════════
-    //  GAS GIANT — turbulent bands + multi-storm
-    // ════════════════════════════════════════════
-    float lat = pos.y;
-    float lon = atan(pos.z, pos.x);
-
-    // === Turbulent band structure with multiple warp layers ===
-    float warp  = fbm(pos * 2.5 + uSeed) * 2.2;
-    float warp2 = fbm(pos * 4.0 + uSeed + 42.0) * 0.8;
-    float bandVal = sin(lat * 18.0 + warp) * 0.5 + 0.5;
-
-    // Fine sub-band structure
-    float fine = sin(lat * 52.0 + fbm(pos * 7.0 + uSeed + 20.0) * 2.5) * 0.5 + 0.5;
-
-    // Turbulent eddies along band boundaries
-    float bandEdge = abs(fract(lat * 2.86 + warp * 0.15) - 0.5) * 2.0;
-    float edgeTurb = smoothstep(0.25, 0.48, bandEdge);
-    float turb = fbm(pos * 12.0 + vec3(uTime * 0.008, 0, uSeed + 70.0)) * edgeTurb;
-    bandVal = bandVal * 0.58 + fine * 0.24 + turb * 0.18;
-
-    // === Richer band coloring with 3-zone gradient ===
-    vec3 color;
-    if (bandVal < 0.38) {
-      color = mix(uColor2, uColor1, smoothstep(0.12, 0.38, bandVal));
-    } else if (bandVal < 0.62) {
-      color = mix(uColor1, uColor1 * 1.12 + uColor3 * 0.06, smoothstep(0.38, 0.62, bandVal));
-    } else {
-      color = mix(uColor1 * 1.12, uColor2 * 0.88, smoothstep(0.62, 1.0, bandVal));
-    }
-
-    // === Multiple storm ovals ===
-    // Great storm spot (large, prominent)
-    float spotAngle = uSeed * 2.0;
-    vec2 spotCenter = vec2(cos(spotAngle) * 0.35, -0.15 + sin(uSeed * 3.0) * 0.2);
-    float spotDist = length(pos.xz - spotCenter);
-    float spot = 1.0 - smoothstep(0.0, 0.14, spotDist);
-    float swirl = fbm(pos * 8.0 + vec3(0, 0, uTime * 0.015) + uSeed + 50.0);
-    spot *= smoothstep(0.28, 0.55, swirl);
-    color = mix(color, uColor3, spot * 0.85);
-
-    // Secondary storm (different latitude)
-    float s2Angle = uSeed * 4.7 + 2.1;
-    vec2 s2Center = vec2(cos(s2Angle) * 0.30, 0.25 + sin(uSeed * 5.0) * 0.15);
-    float s2Dist = length(pos.xz - s2Center);
-    float s2 = 1.0 - smoothstep(0.0, 0.075, s2Dist);
-    s2 *= smoothstep(0.3, 0.6, fbm(pos * 12.0 + vec3(0, 0, uTime * 0.02) + uSeed + 90.0));
-    color = mix(color, uColor3 * 0.85 + uColor1 * 0.15, s2 * 0.70);
-
-    // White oval chain (3 small anticyclones)
-    for (int si = 0; si < 3; si++) {
-      float sAngle = uSeed * 3.3 + float(si) * 1.8;
-      vec2 sC = vec2(cos(sAngle) * 0.26 + float(si) * 0.09,
-                     -0.36 + sin(uSeed * 7.0 + float(si)) * 0.06);
-      float sD = length(pos.xz - sC);
-      float sSp = 1.0 - smoothstep(0.0, 0.04, sD);
-      sSp *= smoothstep(0.25, 0.5, fbm(pos * 16.0 + uSeed + float(si) * 30.0));
-      vec3 whiteOval = mix(uColor1 * 1.2, vec3(0.92, 0.88, 0.80), 0.55);
-      color = mix(color, whiteOval, sSp * 0.50);
-    }
-
-    // === Chevron / festoon patterns at belt-zone boundaries ===
-    float chevron = sin(lon * 8.0 + lat * 25.0 + warp2 * 6.0) * 0.5 + 0.5;
-    chevron *= smoothstep(0.35, 0.50, bandEdge) * (1.0 - smoothstep(0.50, 0.65, bandEdge));
-    color = mix(color, uColor2 * 0.72, chevron * 0.14);
-
-    // === Polar regions — chaotic / muted (Saturn hex, Jupiter vortex swirl) ===
-    float polar = smoothstep(0.55, 0.82, abs(lat));
-    float polarNoise = fbm(pos * 6.0 + uSeed + 200.0);
-    vec3 polarColor = mix(uColor2 * 0.62, uColor1 * 0.50, polarNoise);
-    color = mix(color, polarColor, polar * 0.72);
-
-    // Belt shading (zones brighter than belts)
-    float zoneShade = sin(lat * 18.0 + warp) * 0.06;
-    color += zoneShade;
-
-    // Very soft Lambert (gas giants are self-illuminated-looking)
-    float diff = NdotL * 0.30 + 0.70;
-    color *= diff;
-
-    // Hot jupiter glow
-    if (uEmissive > 0.01) {
-      float nightFactor = 1.0 - smoothstep(-0.05, 0.2, NdotL);
-      color += vec3(1.0, 0.35, 0.08) * nightFactor * uEmissive * 1.8;
-    }
-
-    // Deep atmosphere rim (reduced — separate shell handles outer glow)
-    float gasRim = pow(rim, 2.2) * uAtmThickness;
-    color += uAtmColor * gasRim * 0.30;
-
+  // ==== GAS GIANT PATH ====
+  if(uIsGas > 0.5) {
+    vec3 color = gasGiantColor(pos);
+    float NdotL = max(dot(N,L),0.0);
+    float term = smoothstep(-0.05,0.18,NdotL);
+    // [15] Polar darkening/brightening — Jupiter-like limb-darkened poles
+    float gasLat = abs(pos.y);
+    float polarDark = 1.0 - smoothstep(0.55, 0.90, gasLat) * 0.25;
+    color *= polarDark;
+    finalColor = color * NdotL * 0.95 * term + color * 0.02;
+    // Tinted specular (not pure white — matches atmosphere)
+    vec3 specTint = mix(vec3(1.0), uAtmColor * 0.5 + 0.5, 0.3);
+    finalColor += specTint * pow(max(dot(N,H),0.0),120.0) * 0.06 * term;
+    // [16] Atmospheric haze rim — subtle, day-side only
+    float gasHazeRim = pow(rim, 3.0);
+    vec3 gasHazeCol = uAtmColor * 0.6 + vec3(0.05, 0.08, 0.12);
+    finalColor += gasHazeCol * gasHazeRim * 0.20 * term;
     // Limb darkening
-    color *= (1.0 - pow(rim, 3.0) * 0.25);
+    finalColor *= 1.0 - pow(rim,4.0)*0.40;
+    // ACES filmic tone mapping (no gamma — ACES already maps to display range)
+    finalColor = finalColor * (finalColor * 2.51 + 0.03) / (finalColor * (finalColor * 2.43 + 0.59) + 0.14);
+    gl_FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);
+    return;
+  }
 
-    finalColor = color;
+  // ==== SOLID WORLD PATH ====
+  float eps = 0.005;
+  vec3 pX = normalize(pos+vec3(eps,0,0));
+  vec3 pZ = normalize(pos+vec3(0,0,eps));
 
+  float h  = terrainHeight(pos);
+  float hX = terrainHeight(pX);
+  float hZ = terrainHeight(pZ);
+
+  // Forward-difference bump (3 samples, not 4)
+  vec3 dH = vec3(h-hX, 0.0, h-hZ);
+  dH.y = -(dH.x + dH.z) * 0.5; // approximate Y from X+Z
+  vec3 bumpN = normalize(N + dH * 16.0);
+
+  float NdotL = max(dot(bumpN,L),0.0);
+  float absLat = abs(pos.y);
+  float slope = length(dH) * 120.0;
+
+  // ---- VORONOI BIOME REGIONS ----
+  vec3 vp = voronoiPlates(pos, uNoiseScale * 0.55 + uSeed * 0.005);
+  float biomeId = vp.z;     // 0-1 hash per plate
+
+  // Plate borders: noise-modulated width for organic, natural-looking boundaries.
+  // Some segments fade out entirely (geological breakup), others widen.
+  float borderNoise = noise3D(pos * 8.0 + uSeed * 2.7) * 0.5 + 0.5;
+  float borderBreak = smoothstep(0.20, 0.50, noise3D(pos * 3.2 + uSeed * 5.1)); // segments vanish
+  float borderWidth = mix(0.08, 0.22, borderNoise); // wider blend range
+  float plateBorder = (1.0 - smoothstep(0.0, borderWidth, vp.y)) * borderBreak;
+
+  // ---- OCEAN (heightmap-driven water surface) ----
+  float shoreN = noise3D(pos*18.0+uSeed*3.3)*0.012
+               + noise3D(pos*36.0+uSeed*5.1)*0.006;  // dual-freq shore detail
+  float effOcean = uOceanLevel + shoreN;
+  float underwaterDepth = effOcean - h;
+  float shoreBlend = smoothstep(-0.04, 0.035, underwaterDepth); // wider transition zone
+  bool isOcean = shoreBlend > 0.01;
+
+  vec3 color;
+  if(isOcean) {
+    // Depth-dependent ocean color (shallow turquoise -> deep navy)
+    float depth01 = clamp(underwaterDepth / max(uOceanLevel,0.01), 0.0, 1.0);
+    vec3 shallowC = uOceanColor * 1.4 + vec3(0.04,0.08,0.06);
+    vec3 deepC = uOceanColor * 0.35;
+    color = mix(shallowC, deepC, smoothstep(0.0,0.5,depth01));
+    // Smooth continuous ocean floor variation — NO voronoi cell boundaries
+    // Use multi-octave 3D noise for gentle, organic color variation across the ocean
+    float oceanVar1 = noise3D(pos * 3.5 + uSeed * 1.3) * 0.5 + 0.5;
+    float oceanVar2 = noise3D(pos * 7.0 + uSeed * 2.7) * 0.5 + 0.5;
+    float oceanVar  = oceanVar1 * 0.7 + oceanVar2 * 0.3;
+    float floorHue = (oceanVar - 0.5) * 0.8;
+    color += vec3(floorHue*0.03, -floorHue*0.02, floorHue*0.05) * (1.0-depth01*0.8);
+
+    // Shore foam fringe — wider, softer transition
+    float foam = 1.0 - smoothstep(0.0, 0.015, underwaterDepth);
+    foam *= noise3D(pos*60.0+uTime*0.5)*0.7+0.3;
+    color = mix(color, vec3(0.85,0.90,0.95), foam*0.50);
+    // Sandy shallows tint (warm near-shore band)
+    float sandyShallow = smoothstep(0.0, 0.025, underwaterDepth) * (1.0-smoothstep(0.025, 0.08, underwaterDepth));
+    color = mix(color, uOceanColor*1.2+vec3(0.1,0.08,0.04), sandyShallow*0.30);
+
+    // Animated wave normals (dual-frequency, latitude-aware rotation)
+    vec3 wp1 = cloudWarp(pos, 0.02) * 45.0;
+    vec3 wp2 = cloudWarp(pos, -0.015) * 30.0;
+    float w1 = noise3D(wp1+uSeed)*2.0-1.0;
+    float w2 = noise3D(wp2+uSeed+50.0)*2.0-1.0;
+    float waveStr = 0.06 * (1.0-depth01*0.8);
+    bumpN = normalize(N + vec3(w1,0,w2)*waveStr);
+    NdotL = max(dot(bumpN,L),0.0);
+
+    // [22] Ocean sun-glint hotspot — concentrated specular reflection
+    vec3 oceanH = normalize(L + V);
+    float oceanNdotH = max(dot(bumpN, oceanH), 0.0);
+    float glintPow = pow(oceanNdotH, 320.0);    // very tight hotspot
+    float glintWide = pow(oceanNdotH, 48.0);    // broader shimmer
+    // Fresnel-modulated intensity (brighter at grazing angles)
+    float glintFresnel = 0.04 + 0.96 * pow(1.0 - max(dot(bumpN, V), 0.0), 5.0);
+    vec3 glintCol = vec3(1.0, 0.98, 0.92);
+    color += glintCol * (glintPow * 0.55 + glintWide * 0.08) * glintFresnel * (1.0 - depth01 * 0.6);
   } else {
-    // ════════════════════════════════════════════
-    //  SOLID WORLD — terrain + ocean + ice + lava
-    // ════════════════════════════════════════════
+    // ---- LAND: Biome-aware coloring ----
+    float t = smoothstep(0.28, 0.82, h);
 
-    // ══════════════════════════════════════════════════
-    //  BIOME TERRITORY SYSTEM — dramatically distinct regions
-    // ══════════════════════════════════════════════════
-    // ── Dual-cell biome voronoi (overlapping textures with faded edges) ──
-    vec4 terr = biomeVoronoi(pos + uSeed * 3.0);
-    float d1 = terr.x, tID = terr.y, d2 = terr.z, tID2 = terr.w;
+    // Per-plate color variation via biomeId hash
+    float hueShift = (biomeId - 0.5) * 0.18;
+    // Per-plate albedo/brightness variation — each zone gets unique brightness
+    float plateAlbedo = 0.82 + fract(biomeId * 17.31) * 0.36; // 0.82 to 1.18
+    float plateSatMod = 0.90 + fract(biomeId * 23.57) * 0.20; // subtle saturation variation
+    vec3 c1b = uColor1 + vec3(hueShift, hueShift*0.5, -hueShift*0.3);
+    vec3 c2b = uColor2 + vec3(hueShift*0.7, -hueShift*0.3, hueShift*0.4);
+    vec3 c3b = uColor3 + vec3(-hueShift*0.4, hueShift*0.3, hueShift*0.2);
+    c1b *= plateAlbedo; c2b *= plateAlbedo; c3b *= plateAlbedo;
+    // Desaturate/saturate slightly per plate
+    float lum1 = dot(c1b, vec3(0.299,0.587,0.114));
+    c1b = mix(vec3(lum1), c1b, plateSatMod);
+    float lum2 = dot(c2b, vec3(0.299,0.587,0.114));
+    c2b = mix(vec3(lum2), c2b, plateSatMod);
 
-    // Edge blend factor: 0 = deep inside primary cell, 1 = right at boundary
-    float edgeDist = d2 - d1;
-    float edgeBlend = 1.0 - smoothstep(0.02, 0.30, edgeDist);
-    float tBorder = 1.0 - smoothstep(0.02, 0.05, edgeDist);
+    // Height-based color ramp with smooth transitions
+    color = t < 0.35 ? mix(c1b, c2b, t/0.35)
+          : t < 0.65 ? mix(c2b, c3b, (t-0.35)/0.30)
+          : mix(c3b, c2b*0.7+0.10, (t-0.65)/0.35);
 
-    // Classify both neighboring biomes
-    float biome  = classifyBiome(tID);
-    float biome2 = classifyBiome(tID2);
-
-    // Crossfade weight (caps at 50% so primary biome stays dominant)
-    float bw = edgeBlend * 0.5;
-
-    // Compat flags for ocean / cloud / ice subsystems (primary biome)
-    float tVolcanic = step(1.5, biome) * step(biome, 2.5);
-    float tMare     = step(2.5, biome) * step(biome, 3.5);
-    float tTectonic = min(step(0.5, biome) * step(biome, 1.5)
-                       + step(3.5, biome) * step(biome, 4.5), 1.0);
-    float tHighland = step(4.5, biome);
-
-    // Blended terrain parameters (smooth transition between biomes)
-    float mc1, mm1, mv1, mf1;
-    biomeTerrainMults(biome, mc1, mm1, mv1, mf1);
-    float mc2, mm2, mv2, mf2;
-    biomeTerrainMults(biome2, mc2, mm2, mv2, mf2);
-    // Age-modulated: ancient → more craters, less volcanism; young → opposite
-    float ageCraterMult = 0.5 + uTerrainAge * 1.2;   // 0.5 at age=0, 1.7 at age=1
-    float ageVolcMult = 1.5 - uTerrainAge * 1.2;     // 1.5 at age=0, 0.3 at age=1
-    float ageMountMult = 1.0 - uTerrainAge * 0.35;   // eroded peaks on old worlds
-    // Tectonics-modulated: active → sharper ridges, deeper valleys
-    float tectMountMult = 1.0 + uTectonics * 0.8;
-    float tectValleyMult = 1.0 + uTectonics * 0.6;
-    float lCrater = uCraterDensity * mix(mc1, mc2, bw) * ageCraterMult;
-    float lMount  = uMountainHeight * mix(mm1, mm2, bw) * ageMountMult * tectMountMult;
-    float lValley = uValleyDepth * mix(mv1, mv2, bw) * tectValleyMult;
-    float lVolc   = uVolcanism * mix(mf1, mf2, bw) * ageVolcMult;
-
-    // Micro-feature strength (fades near biome edges)
-    float microStr = 1.0 - edgeBlend * 0.80;
-
-    // Ice world: smooth surfaces, far fewer craters, weaker mountains
-    if (uIsIceWorld > 0.5) {
-      lCrater *= 0.15;
-      lMount  *= 0.30;
-      lVolc   *= 0.40;
+    // Texture-informed coloring (triplanar, no pole pinch)
+    if(uTexInfluence > 0.01) {
+      float ts = uTriplanarScale;
+      vec3 tLow  = triplanarSample(uTexLow,  pos, N, ts);
+      vec3 tMid  = triplanarSample(uTexMid,  pos, N, ts);
+      vec3 tHigh = triplanarSample(uTexHigh, pos, N, ts);
+      vec3 texC = t < 0.35 ? mix(tLow,tMid,t/0.35)
+                : t < 0.65 ? mix(tMid,tHigh,(t-0.35)/0.30)
+                : tHigh;
+      color = mix(color, texC, uTexInfluence*0.50);
     }
 
-    // ── Terrain height with domain warping
-    float h  = warpedFbm(pos * uNoiseScale + uSeed);
-    float eps = 0.003;
-    float hx = warpedFbm((pos + vec3(eps, 0, 0)) * uNoiseScale + uSeed);
-    float hz = warpedFbm((pos + vec3(0, 0, eps)) * uNoiseScale + uSeed);
+    // Latitude: cooler tone at poles (uses abs(y) -- sphere 3D, no UV pinch)
+    color = mix(color, mix(color,vec3(0.76,0.79,0.86),0.22), smoothstep(0.50,0.85,absLat));
 
-    // Ice world: smooth undulating ice plains in mare territories
-    if (uIsIceWorld > 0.5) {
-      float smoothIce = fbm(pos * 2.0 + uSeed + 400.0) * 0.25;
-      h  = mix(h,  smoothIce, tMare * 0.70);
-      hx = mix(hx, smoothIce, tMare * 0.70);
-      hz = mix(hz, smoothIce, tMare * 0.70);
+    // Latitude-band brightness variation — equatorial, mid-lat, polar zones differ
+    float latBand = sin(absLat * 6.28 + uSeed * 0.1) * 0.08;
+    color *= 1.0 + latBand;
+
+    // Slope: rocky cliff exposure
+    // [12] Slope-dependent micro-detail bump noise for rough terrain
+    float slopeRough = smoothstep(0.20, 0.55, slope);
+    float microBump = noise3D(pos * 80.0 + uSeed + 700.0) * 0.5 + 0.5;
+    color = mix(color, uColor2*0.50, slopeRough*0.50);
+    color *= 1.0 - slopeRough * (1.0 - microBump) * 0.12; // micro-roughness darkening
+
+    // [26] Crater ejecta ray patterns — bright radial rays from impact sites
+    if(uCraterDensity > 0.01) {
+      vec3 ecp = pos * uNoiseScale * 3.0 + uSeed;
+      vec3 eci = floor(ecp), ecf = fract(ecp);
+      // Find nearest crater center for ejecta rays
+      float eDist = 1.0;
+      vec3 eCenter = vec3(0.0);
+      for(int x=-1;x<=1;x++)
+        for(int y=-1;y<=1;y++)
+          for(int z=-1;z<=1;z++){
+            vec3 g = vec3(float(x),float(y),float(z));
+            vec3 o = fract(sin(vec3(
+              dot(eci+g,vec3(127.1,311.7,74.7)),
+              dot(eci+g,vec3(269.5,183.3,246.1)),
+              dot(eci+g,vec3(113.5,271.9,124.6))))*43758.5453)*0.5+0.25;
+            float d = length(g+o-ecf);
+            if(d < eDist) { eDist = d; eCenter = g + o; }
+          }
+      // Radial ray pattern from crater center
+      vec3 toCenter = normalize(ecf - eCenter);
+      float rayAngle = atan(toCenter.z, toCenter.x);
+      float rays = sin(rayAngle * 7.0 + fract(sin(dot(eci, vec3(37.1, 91.7, 53.3))) * 43758.5) * 6.28) * 0.5 + 0.5;
+      rays = smoothstep(0.55, 0.85, rays);
+      // Ejecta visible between crater rim and ~3x crater radius
+      float ejectaZone = smoothstep(0.18, 0.25, eDist) * (1.0 - smoothstep(0.25, 0.55, eDist));
+      // Only fresh craters have visible ejecta (high crater density = old surface, less visible)
+      float freshness = step(0.5, fract(sin(dot(eci, vec3(71.3, 23.9, 17.1))) * 43758.5));
+      color += vec3(0.12, 0.10, 0.08) * rays * ejectaZone * freshness * uCraterDensity * 0.6;
     }
 
-    // ── Impact craters (territory-modulated density)
-    if (lCrater > 0.01) {
-      float cH  = craterField(pos, lCrater, uSeed);
-      float cHx = craterField(pos + vec3(eps, 0, 0), lCrater, uSeed);
-      float cHz = craterField(pos + vec3(0, 0, eps), lCrater, uSeed);
-      h += cH; hx += cHx; hz += cHz;
+    // [29] Terrain color noise breakup — high-frequency detail variation
+    float microVar = noise3D(pos * 65.0 + uSeed + 800.0) * 0.5 + 0.5;
+    float microVar2 = noise3D(pos * 130.0 + uSeed + 850.0) * 0.5 + 0.5;
+    color *= 0.92 + 0.08 * microVar + 0.04 * microVar2;  // ±6% brightness variation
+    // Subtle hue micro-shift per-pixel
+    color += (vec3(microVar, microVar2, microVar * microVar2) - 0.5) * 0.025;
+
+    // Plate boundaries: subtle tonal shift (not dark lines)
+    float borderDarken = mix(0.92, 0.85, borderNoise); // very subtle
+    color *= mix(1.0, borderDarken, plateBorder * uTectonics * smoothstep(0.10, 0.35, uTectonics));
+
+    // Vegetation (habitable conditions)
+    if(length(uFoliageColor) > 0.01) {
+      float veg = smoothstep(0.32,0.54,h) * (1.0-smoothstep(0.58,0.78,h));
+      veg *= clamp(1.0-absLat*1.4, 0.0, 1.0);
+      veg *= clamp(1.0-slope*2.5, 0.0, 1.0);
+      veg *= smoothstep(0.03, 0.12, underwaterDepth < 0.0 ? -underwaterDepth : 0.0) + step(0.0, underwaterDepth-0.01) < 0.5 ? 0.0 : 1.0;
+      // Vegetation patches using plate biome (some plates barren)
+      float vegPlate = step(0.25, biomeId) * step(biomeId, 0.85);
+      color = mix(color, uFoliageColor, veg * vegPlate * 0.55);
     }
 
-    // ── Mountain ridges (territory-modulated, tectonic zones get more)
-    if (lMount > 0.01) {
-      float mH  = mountainRidges(pos, lMount, uSeed);
-      float mHx = mountainRidges(pos + vec3(eps, 0, 0), lMount, uSeed);
-      float mHz = mountainRidges(pos + vec3(0, 0, eps), lMount, uSeed);
-      h += mH; hx += mHx; hz += mHz;
+    // Shore transition
+    // [14] Wet-sand darkening — narrow band just above waterline
+    float wetSand = smoothstep(0.0, 0.02, -underwaterDepth) * (1.0 - smoothstep(0.02, 0.06, -underwaterDepth));
+    color *= 1.0 - wetSand * 0.25;
+    color = mix(color, uOceanColor*0.8+0.06, shoreBlend*0.6);
+  }
+
+  // ---- ICE CAPS (3D noise, no pole pinch) ----
+  // Frost-zone worlds (already icy surfaces): subtle pole variation instead of dramatic white caps
+  if(uIceCaps > 0.01) {
+    float iceLine = 1.0 - uIceCaps*0.55;
+    float iceWarp = fbm3(pos*5.0+uSeed+50.0)*0.10;
+    float ice = smoothstep(iceLine-0.06, iceLine+0.06, absLat+iceWarp);
+
+    // Reduce polar whitening for ice worlds — they're already icy everywhere
+    float iceWorldDampen = uIsIceWorld > 0.5 ? 0.25 : 1.0;
+    ice *= iceWorldDampen;
+
+    vec3 iceCol = mix(vec3(0.90,0.93,0.97), vec3(0.70,0.82,0.96),
+                      smoothstep(iceLine, iceLine+0.22, absLat)*0.42);
+    // [13] Ice subsurface scattering — translucent blue-white at glancing angles
+    float iceFresnel = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    iceCol += vec3(0.15, 0.25, 0.40) * iceFresnel * 0.25 * max(dot(N, L), 0.0);
+    // For frost-zone worlds, ice is slightly tinted by the base surface color
+    if(uIsIceWorld > 0.5) {
+      iceCol = mix(iceCol, color*1.15, 0.35);
     }
+    // Glacier crevasses via 3D noise (not sin(pos.x) which pinches at poles)
+    float glacier = abs(noise3D(pos*25.0+uSeed+60.0)*2.0-1.0);
+    iceCol -= smoothstep(0.0,0.12,glacier)*0.05*ice;
+    color = mix(color, iceCol, ice);
+  }
 
-    // ── Rift valleys & canyon networks
-    if (lValley > 0.01) {
-      float vH  = valleyCarve(pos, lValley, uSeed);
-      float vHx = valleyCarve(pos + vec3(eps, 0, 0), lValley, uSeed);
-      float vHz = valleyCarve(pos + vec3(0, 0, eps), lValley, uSeed);
-      h += vH; hx += vHx; hz += vHz;
+  // ---- TIDALLY LOCKED EYEBALL ----
+  if(uTidallyLocked > 0.5 && uSpinOrbit32 < 0.5) {
+    float facing = dot(pos,L);
+    float iceWarpT = fbm3(pos*6.0+uSeed+150.0)*0.20;
+    float iceMask = smoothstep(0.12,-0.55,facing+iceWarpT);
+    vec3 tidalIce = mix(vec3(0.82,0.86,0.94),vec3(0.55,0.68,0.88),
+                        smoothstep(-0.3,-0.85,facing)*0.60);
+    color = mix(color, tidalIce, iceMask);
+    float heatMask = smoothstep(0.50,0.90,facing);
+    color = mix(color, mix(color*0.50,vec3(0.28,0.14,0.05),0.55), heatMask*0.55);
+    if(uSubstellarTemp > 500.0) {
+      float molten = smoothstep(0.82,0.97,facing);
+      color = mix(color, vec3(1,0.35,0.06)*smoothstep(0.35,0.55,
+        fbm3(pos*10.0+uSeed+170.0)), molten*0.60);
     }
+  }
 
-    // ── Volcanic peaks & shield volcanoes (concentrated in volcanic territories)
-    if (lVolc > 0.01) {
-      float fH  = volcanicField(pos, lVolc, uSeed);
-      float fHx = volcanicField(pos + vec3(eps, 0, 0), lVolc, uSeed);
-      float fHz = volcanicField(pos + vec3(0, 0, eps), lVolc, uSeed);
-      h += fH; hx += fHx; hz += fHz;
-    }
+  // ---- LIGHTING (Oren-Nayar diffuse + ambient fill) ----
+  float terminator = smoothstep(-0.08, 0.25, NdotL);
+  // Height-based ambient occlusion: low terrain darker, ridges brighter
+  float ao = 0.85 + 0.15 * smoothstep(0.35, 0.65, h);
+  vec3 ambient = color * 0.08 * ao;
+  vec3 lit = color * NdotL * 0.88;
+  finalColor = lit * terminator + ambient;
 
-    // ── Biome terrain modifiers (fade near edges) ──
-    float terrModStr = 1.0 - edgeBlend * 0.65;
-    // Desert: flatten + dune wave overlay
-    if (biome < 0.5) {
-      float duneDir = fract(tID * 3.3) * 6.28;
-      vec3 dVec = vec3(cos(duneDir), 0.0, sin(duneDir));
-      float duneW = sin(dot(pos, dVec) * 35.0 + fbm(pos * 2.5 + uSeed + 200.0) * 4.0) * 0.012;
-      float flatBase = warpedFbm(pos * uNoiseScale * 0.3 + uSeed + 100.0) * 0.35;
-      float fAmt = terrModStr * 0.55;
-      h  = mix(h,  flatBase + duneW, fAmt);
-      hx = mix(hx, flatBase + duneW, fAmt);
-      hz = mix(hz, flatBase + duneW, fAmt);
-    }
-    // Mare basin: flatten to ancient eroded plain
-    if (biome > 2.5 && biome < 3.5) {
-      float flatBase = warpedFbm(pos * uNoiseScale * 0.2 + uSeed + 150.0) * 0.20;
-      float fAmt = terrModStr * 0.65;
-      h  = mix(h,  flatBase, fAmt);
-      hx = mix(hx, flatBase, fAmt);
-      hz = mix(hz, flatBase, fAmt);
-    }
-
-    // ── Bump normals (strong relief)
-    vec3 bumpN = normalize(N + vec3(h - hx, 0.04, h - hz) * 18.0);
-
-    // Height-based coloring
-    vec3 color;
-    bool isOcean = h < uOceanLevel;
-
-    if (isOcean) {
-      float depth = (uOceanLevel - h) / max(uOceanLevel, 0.01);
-
-      // ── Compute seafloor terrain color first (as if land) ──
-      float tSeafloor = (h) / max(1.0 - uOceanLevel, 0.01);
-      float slopeSeafloor = length(vec2(h - hx, h - hz)) * 120.0;
-      vec3 bC1sf, bC2sf, bC3sf;
-      biomePalette(biome, bC1sf, bC2sf, bC3sf);
-      bC1sf = mix(uColor1, bC1sf, 0.60);
-      bC2sf = mix(uColor2, bC2sf, 0.50);
-      vec3 seafloorCol;
-      if (tSeafloor < 0.35) {
-        seafloorCol = mix(bC1sf, bC2sf, smoothstep(0.0, 0.35, tSeafloor));
-      } else {
-        seafloorCol = mix(bC2sf, bC1sf * 0.6, smoothstep(0.35, 1.0, tSeafloor));
-      }
-      // darken seafloor slightly (sediment/mud)
-      seafloorCol *= 0.75;
-
-      // ── Water absorption — deeper water absorbs more light ──
-      // Shallow water is semi-transparent, deep water opaque
-      float waterOpacity = smoothstep(0.0, 0.35, depth); // 0=shore(transparent) to 1=deep(opaque)
-
-      // Water color (layered depth)
-      vec3 shallow = uOceanColor * 2.2 + vec3(0.03, 0.08, 0.05);
-      vec3 mid = uOceanColor * 0.65;
-      vec3 deep = uOceanColor * 0.25;
-      vec3 abyss = vec3(0.01, 0.02, 0.06);
-      vec3 waterCol;
-      if (depth < 0.20) {
-        waterCol = mix(shallow, mid, smoothstep(0.0, 0.20, depth));
-      } else if (depth < 0.55) {
-        waterCol = mix(mid, deep, smoothstep(0.20, 0.55, depth));
-      } else {
-        waterCol = mix(deep, abyss, smoothstep(0.55, 0.95, depth));
-      }
-
-      // ── Blend seafloor visible through water ──
-      // Near shore: see terrain through the water clearly
-      // Deep: water color dominates
-      color = mix(seafloorCol, waterCol, waterOpacity);
-
-      // Shore foam
-      float shore = 1.0 - smoothstep(0.0, 0.03, uOceanLevel - h);
-      color = mix(color, vec3(0.55, 0.62, 0.52), shore * 0.40);
-
-      // Ocean current patterns (visible from orbit)
-      float current = fbm(pos * 4.5 + vec3(uTime * 0.006, uSeed, uTime * 0.004));
-      float currentLine = abs(current * 2.0 - 1.0);
-      currentLine = 1.0 - pow(currentLine, 0.4);
-      color += uOceanColor * 0.14 * currentLine * (1.0 - depth * 0.7);
-
-      // Territory-sensitive ocean features
-      if (tMare > 0.2 && depth < 0.30) {
-        // Shallow reef / lagoon patterns in mare territories
-        vec2 reefCell = voronoi3D(pos * 35.0 + uSeed * 6.6);
-        float reef = (1.0 - smoothstep(0.0, 0.04, reefCell.x)) * (1.0 - depth / 0.30);
-        color = mix(color, vec3(0.10, 0.28, 0.20), reef * tMare * 0.30);
-      }
-      if (tTectonic > 0.3 && depth > 0.5) {
-        // Deep trenches in tectonic territories
-        float trenchNoise = abs(noise3D(pos * 8.0 + uSeed * 3.0) * 2.0 - 1.0);
-        trenchNoise = pow(trenchNoise, 0.5);
-        color = mix(color, abyss * 0.5, (1.0 - trenchNoise) * tTectonic * 0.25);
-      }
-
-      // Deep ocean ice phases (Ice-VI / Ice-VII) for super-ocean worlds
-      if (uOceanLevel > 0.55 && depth > 0.70) {
-        float icePhase = smoothstep(0.70, 0.95, depth);
-        // Crystalline voronoi facets — geometric pressure-ice structure
-        vec2 iceCell = voronoi3D(pos * 22.0 + uSeed * 5.0);
-        float facetEdge = smoothstep(0.0, 0.03, iceCell.x);
-        vec3 deepIceColor = mix(vec3(0.06, 0.12, 0.28), vec3(0.16, 0.28, 0.45), facetEdge);
-        // Geometric crystalline glow at cell edges
-        float facetGlow = exp(-(iceCell.x * iceCell.x) / 0.001) * 0.3;
-        deepIceColor += vec3(0.06, 0.12, 0.28) * facetGlow;
-        color = mix(color, deepIceColor, icePhase * 0.65);
-      }
-
-      // Hydrothermal vent glow at ocean floor
-      if (depth > 0.85) {
-        vec2 ventCell = voronoi3D(pos * 14.0 + uSeed * 9.0);
-        float vent = exp(-(ventCell.x * ventCell.x) / 0.004);
-        float ventStrength = smoothstep(0.85, 0.98, depth) * step(0.82, ventCell.y);
-        color += vec3(0.50, 0.15, 0.03) * vent * ventStrength * 0.25;
-      }
-
-      // Animated ocean wave normals (weaker in deep water)
-      vec3 waveP = pos * 22.0 + vec3(uTime * 0.025, uTime * 0.018, uSeed);
-      float w1 = noise3D(waveP) - 0.5;
-      float w2 = noise3D(waveP * 2.1 + 55.0) - 0.5;
-      bumpN = normalize(N + vec3(w1, 0.0, w2) * 0.06 * (1.0 - depth * 0.7));
-    } else {
-      float t = (h - uOceanLevel) / max(1.0 - uOceanLevel, 0.01);
-      float slope = length(vec2(h - hx, h - hz)) * 120.0;
-
-      // ── Dual-cell blended biome palettes ──
-      vec3 bC1a, bC2a, bC3a;
-      biomePalette(biome, bC1a, bC2a, bC3a);
-      vec3 bC1b, bC2b, bC3b;
-      biomePalette(biome2, bC1b, bC2b, bC3b);
-
-      // Crossfade between neighboring biome palettes at edges
-      vec3 bCol1 = mix(bC1a, bC1b, bw);
-      vec3 bCol2 = mix(bC2a, bC2b, bw);
-      vec3 bCol3 = mix(bC3a, bC3b, bw);
-
-      // Blend with planet base (preserves planet type identity)
-      bCol1 = mix(uColor1, bCol1, 0.70);
-      bCol2 = mix(uColor2, bCol2, 0.60);
-      bCol3 = mix(uColor3, bCol3, 0.50);
-
-      // Star-dependent foliage (blended suppression at biome edges)
-      vec3 landC1 = bCol1;
-      if (length(uFoliageColor) > 0.1) {
-        float vegZone = (1.0 - smoothstep(0.0, 0.45, t)) * (1.0 - smoothstep(0.2, 0.7, slope));
-        float latVeg = abs(pos.y);
-        vegZone *= 1.0 - smoothstep(0.55, 0.78, latVeg);
-        // Blend vegetation suppression between neighboring biomes
-        float vegSuppress = mix(biomeVegSuppress(biome), biomeVegSuppress(biome2), bw);
-        landC1 = mix(bCol1, uFoliageColor, vegZone * 0.92 * vegSuppress);
-      }
-
-      // Height-based coloring with biome palette
-      if (t < 0.35) {
-        color = mix(landC1, bCol2, smoothstep(0.0, 0.35, t));
-      } else {
-        color = mix(bCol2, bCol3, smoothstep(0.35, 1.0, t));
-      }
-      // Rocky cliff faces and steep terrain
-      color = mix(color, bCol3 * 0.40, smoothstep(0.25, 1.0, slope) * 0.55);
-
-      // Crater maria — darkened basalt in mare territories + large impacts
-      float mariaStrength = max(lCrater, tMare * 0.5);
-      if (mariaStrength > 0.12) {
-        vec3 ms = pos + vec3(uSeed, uSeed * 0.73, uSeed * 1.37);
-        vec2 mv = voronoi3D(ms * 5.0);
-        if (mv.y < mariaStrength * 0.5) {
-          float mt = mv.x / (0.28 + mv.y * 0.22);
-          float maria = (1.0 - smoothstep(0.0, 0.7, mt)) * (0.20 + tMare * 0.20);
-          color = mix(color, color * 0.35, maria);
-        }
-      }
-
-      // Ice lineae / tectonic cracks
-      if (uCrackIntensity > 0.01) {
-        float ck = crackPattern(pos, uCrackIntensity, uSeed);
-        color = mix(color, uColor2 * 0.55, ck);
-      }
-
-      // Volcanic caldera glow (territory-modulated)
-      if (lVolc > 0.06) {
-        vec3 vsp = pos + vec3(uSeed * 1.1, uSeed * 0.57, uSeed * 1.83);
-        vec2 vv1 = voronoi3D(vsp * 3.5);
-        if (vv1.y < lVolc * 0.35) {
-          float vt = vv1.x / (0.35 + vv1.y * 0.15);
-          float calGlow = exp(-(vt * vt) / 0.018) * 0.9;
-          float lFlow = (1.0 - smoothstep(0.0, 0.55, vt)) *
-                        noise3D(pos * 18.0 + uSeed * 5.0) * 0.45;
-          float hot = (calGlow + lFlow) * lVolc;
-          color = mix(color, vec3(1.0, 0.30, 0.03), hot * 0.75);
-        }
-        vec2 vv2 = voronoi3D(vsp * 7.0 + 150.0);
-        if (vv2.y < lVolc * 0.45) {
-          float vt2 = vv2.x / (0.22 + vv2.y * 0.12);
-          float calGlow2 = exp(-(vt2 * vt2) / 0.015) * 0.6;
-          color = mix(color, vec3(0.85, 0.20, 0.02), calGlow2 * lVolc * 0.6);
-        }
-      }
-
-      // ── Biome micro-features (fade near biome edges) ──
-      if (biome < 0.5) {
-        // DESERT: dune ripple patterns + wind-scoured flats
-        float duneDir2 = fract(tID * 3.3) * 6.28;
-        vec3 dV = vec3(cos(duneDir2), 0.0, sin(duneDir2));
-        float dune = sin(dot(pos, dV) * 50.0 + fbm(pos * 3.0 + uSeed + 210.0) * 5.0);
-        float duneLines = smoothstep(0.3, 0.7, dune * 0.5 + 0.5);
-        color = mix(color, bCol3 * 0.85, duneLines * microStr * 0.28);
-        float interdune = 1.0 - smoothstep(0.0, 0.2, abs(dune));
-        color = mix(color, bCol2 * 0.80, interdune * microStr * 0.18);
-      }
-      else if (biome < 1.5) {
-        // MOUNTAIN: sharp ridge texture + snow/frost on peaks
-        float ridge = abs(noise3D(pos * 22.0 + uSeed * 3.0) * 2.0 - 1.0);
-        ridge = pow(ridge, 0.35);
-        color = mix(color, bCol2 * 0.45, ridge * microStr * 0.30);
-        if (t > 0.55) {
-          float snow = smoothstep(0.55, 0.85, t) * (1.0 - min(slope * 0.5, 1.0));
-          color = mix(color, vec3(0.90, 0.92, 0.96), snow * microStr * 0.70);
-        }
-        float valShadow = smoothstep(0.5, 1.2, slope) * (1.0 - smoothstep(0.0, 0.3, t));
-        color *= 1.0 - valShadow * microStr * 0.25;
-      }
-      else if (biome < 2.5) {
-        // VOLCANIC: cooling lava plate cracks, glowing fissures
-        vec2 plateC = voronoi3D(pos * 8.0 + uSeed * 2.2 + 300.0);
-        float plateEdge = 1.0 - smoothstep(0.0, 0.045, plateC.x);
-        float lavaHeat = plateEdge * max(uVolcanism, 0.15);
-        color = mix(color, vec3(0.85, 0.22, 0.02), lavaHeat * microStr * 0.55);
-        float crustTex = smoothstep(0.04, 0.12, plateC.x);
-        color = mix(color, bCol1 * 0.65, (1.0 - crustTex) * microStr * 0.20);
-      }
-      else if (biome < 3.5) {
-        // MARE: ghost craters + faint wrinkle ridges
-        vec2 ghostC = voronoi3D(pos * 10.0 + uSeed * 7.7 + 500.0);
-        float ghostRim = exp(-pow(ghostC.x - 0.14, 2.0) / 0.004) * 0.14;
-        color -= ghostRim * microStr;
-        float wrinkle = sin(dot(pos, vec3(2.1, 0.3, 3.7)) * 14.0 + uSeed * 4.0);
-        wrinkle = 1.0 - smoothstep(0.0, 0.05, abs(wrinkle));
-        color += vec3(0.05) * wrinkle * microStr;
-      }
-      else if (biome < 4.5) {
-        // RIFT: exposed strata layers + canyon floor shadow
-        float strata = sin(h * 90.0 + noise3D(pos * 4.0 + uSeed) * 3.5);
-        strata = strata * 0.5 + 0.5;
-        color = mix(color, mix(bCol1 * 0.75, bCol2 * 1.15, strata), microStr * 0.32);
-        float canyon = (1.0 - smoothstep(0.0, 0.18, t)) * smoothstep(0.3, 0.8, slope);
-        color = mix(color, bCol2 * 0.18, canyon * microStr * 0.40);
-        float fault = abs(sin(dot(pos, vec3(3.1, 1.7, 2.3)) * 8.0 + uSeed * 5.0));
-        fault = 1.0 - smoothstep(0.0, 0.035, fault);
-        color = mix(color, bCol2 * 0.28, fault * microStr * 0.22);
-      }
-      else {
-        // HIGHLAND: mesa formations + bedrock veins + wind polish
-        float mesa = smoothstep(0.68, 0.74, fbm(pos * 5.0 + uSeed + 700.0));
-        color = mix(color, bCol3 * 1.08, mesa * microStr * 0.30);
-        float vein = abs(noise3D(pos * 28.0 + uSeed * 8.0) * 2.0 - 1.0);
-        vein = pow(vein, 5.0);
-        color = mix(color, bCol3 * 1.15, vein * microStr * 0.15);
-        float polish = pow(max(1.0 - slope, 0.0), 4.0);
-        color = mix(color, bCol1 * 1.12, polish * microStr * 0.10);
-      }
-
-      // ── Terrain age visual effects ──
-      if (uTerrainAge > 0.65 && !isOcean) {
-        // Ancient: space-weathered darkening + regolith maturation
-        float weathering = (uTerrainAge - 0.65) * 2.86; // 0→1 over 0.65→1.0
-        // Space weathering desaturates and darkens exposed surfaces
-        float lum = dot(color, vec3(0.299, 0.587, 0.114));
-        vec3 weatheredCol = vec3(lum) * 0.85; // desaturate toward grey
-        color = mix(color, weatheredCol, weathering * 0.25);
-        // Micro-crater peppering (ancient bombardment)
-        vec2 microImpact = voronoi3D(pos * 55.0 + uSeed * 12.0);
-        float pepperCrater = (1.0 - smoothstep(0.0, 0.025, microImpact.x)) * weathering;
-        color = mix(color, color * 0.55, pepperCrater * 0.40);
-      }
-      if (uTerrainAge < 0.25 && !isOcean) {
-        // Young: fresh volcanic flows, smooth lava plains, bright ejecta
-        float youth = 1.0 - uTerrainAge / 0.25; // 1 at age=0, 0 at age=0.25
-        // Fresh lava flow texture 
-        float flowNoise = fbm(pos * 6.0 + uSeed + 800.0);
-        float freshFlow = smoothstep(0.35, 0.55, flowNoise) * youth;
-        color = mix(color, bCol1 * 0.75, freshFlow * 0.25);
-      }
-      // ── Tectonics visual effects ──
-      if (uTectonics > 0.5 && !isOcean) {
-        // Active plate boundaries: linear fault scarps
-        float tectStr = (uTectonics - 0.5) * 2.0; // 0→1 over 0.5→1.0
-        float faultLine = abs(noise3D(pos * 6.0 + uSeed * 2.7) * 2.0 - 1.0);
-        faultLine = 1.0 - smoothstep(0.0, 0.04, faultLine);
-        color = mix(color, bCol2 * 0.30, faultLine * tectStr * 0.30);
-        // Folded mountain textures — more complex ridging
-        float fold = sin(dot(pos, vec3(3.7, 1.2, 2.8)) * 12.0 + fbm(pos * 3.0 + uSeed + 900.0) * 4.0);
-        float foldLine = smoothstep(0.65, 0.95, fold * 0.5 + 0.5);
-        float foldMask = smoothstep(0.3, 0.65, t); // mainly at higher elevations
-        color = mix(color, bCol3 * 0.90, foldLine * foldMask * tectStr * 0.20);
-      }
-    }
-
-    // ── Ice world biome enhancements ──
-    if (uIsIceWorld > 0.5 && !isOcean) {
-      if (biome > 2.5 && biome < 3.5) {
-        color = mix(color, vec3(0.82, 0.88, 0.96), microStr * 0.50);
-      }
-      if (biome > 1.5 && biome < 2.5) {
-        color = mix(color, color * vec3(0.88, 0.95, 1.18), microStr * 0.25);
-      }
-      if (tTectonic > 0.3) {
-        float extraCrack = crackPattern(pos, 0.5, uSeed + 111.0);
-        color = mix(color, uColor2 * 0.35, extraCrack * tTectonic * 0.45);
-      }
-    }
-
-    // Polar ice caps — irregular edges, glacier flow lines, blue deep ice
-    if (uIceCaps > 0.01) {
-      float absLat = abs(pos.y);
-      float iceLine = 1.0 - uIceCaps * 0.55;
-      // Irregular coast with domain warping
-      float iceWarp = fbm(pos * 5.0 + uSeed + 50.0) * 0.10;
-      float iceDetail = fbm(pos * 14.0 + uSeed + 55.0) * 0.05;
-      float ice = smoothstep(iceLine - 0.08, iceLine + 0.05, absLat + iceWarp + iceDetail);
-      // Deep ice is blue-tinted, surface is white
-      float iceDepth = smoothstep(iceLine, iceLine + 0.28, absLat);
-      vec3 iceColor = mix(vec3(0.90, 0.93, 0.97), vec3(0.70, 0.82, 0.96), iceDepth * 0.45);
-      // Glacier flow lines
-      float glacier = abs(sin(pos.x * 42.0 + fbm(pos * 8.0 + uSeed + 60.0) * 5.5));
-      glacier = smoothstep(0.0, 0.15, glacier) * 0.06;
-      iceColor -= glacier * ice;
-      color = mix(color, iceColor, ice);
-    }
-
-    // ── Tidally locked eyeball effect ──
-    // Antistellar hemisphere: deep ice/frost accumulation
-    // Substellar point: scorched heat glow
-    if (uTidallyLocked > 0.5 && uSpinOrbit32 < 0.5) {
-      float facing = dot(pos, L);  // -1 (anti) to +1 (sub)
-
-      // === Antistellar ice cap (permanent frost on far side) ===
-      // Stronger, wider coverage — entire dark side should be icy
-      float iceMask = smoothstep(0.15, -0.65, facing); // starts before terminator, full at -0.65
-      // Irregular ice boundary — domain-warped edge
-      float iceWarpT = fbm(pos * 6.0 + uSeed + 150.0) * 0.22;
-      iceMask *= smoothstep(0.20, -0.40, facing + iceWarpT);
-      // Deep ice vs surface frost
-      float iceDepthT = smoothstep(-0.3, -0.85, facing);
-      // Multiple ice textures for variety
-      float iceNoise = fbm(pos * 4.0 + uSeed + 155.0);
-      vec3 tidalIce = mix(
-        vec3(0.82, 0.86, 0.94),   // fresh frost (white-blue)
-        vec3(0.55, 0.68, 0.88),   // deep glacial ice (blue)
-        iceDepthT * 0.65
-      );
-      // Nitrogen frost patches (pinkish-white at extreme cold)
-      float n2frost = smoothstep(-0.7, -0.95, facing) * smoothstep(0.4, 0.6, iceNoise);
-      tidalIce = mix(tidalIce, vec3(0.88, 0.82, 0.84), n2frost * 0.4);
-      // Cracked ice texture on deep frost
-      float crackIce = abs(noise3D(pos * 18.0 + uSeed + 160.0) * 2.0 - 1.0);
-      crackIce = pow(crackIce, 4.0);
-      tidalIce -= vec3(0.12, 0.10, 0.06) * crackIce * iceDepthT;
-      // Cryovolcanic venting at the deep anti-stellar point
-      vec2 cryoCell = voronoi3D(pos * 12.0 + uSeed + 165.0);
-      float cryoVent = exp(-(cryoCell.x * cryoCell.x) / 0.003) * smoothstep(-0.80, -0.95, facing);
-      tidalIce = mix(tidalIce, vec3(0.70, 0.80, 0.95), cryoVent * 0.35);
-      color = mix(color, tidalIce, iceMask);
-
-      // === Substellar scorched zone (extreme heat) ===
-      float heatMask = smoothstep(0.45, 0.90, facing);
-      // Baked/darkened surface, molten at extreme heat
-      vec3 scorchedCol = mix(color * 0.50, vec3(0.30, 0.15, 0.06), 0.60);
-      // Glassed surface (silicate melting at extreme substellar)
-      float glassMask = smoothstep(0.80, 0.96, facing);
-      vec3 glassCol = vec3(0.18, 0.14, 0.10) + vec3(0.08, 0.04, 0.02) * fbm(pos * 8.0 + uSeed + 180.0);
-      scorchedCol = mix(scorchedCol, glassCol, glassMask * 0.5);
-      color = mix(color, scorchedCol, heatMask * 0.55);
-      // Molten glow right at substellar point (if hot enough)
-      if (uSubstellarTemp > 500.0) {
-        float moltenMask = smoothstep(0.82, 0.98, facing);
-        float moltenNoise = fbm(pos * 10.0 + uSeed + 170.0);
-        float moltenCracks = smoothstep(0.35, 0.55, moltenNoise);
-        vec3 moltenGlow = vec3(1.0, 0.35, 0.06) * moltenCracks;
-        color = mix(color, moltenGlow, moltenMask * 0.60);
-      }
-
-      // === Terminator ring — habitable zone (if temperate) ===
-      float termRing = 1.0 - abs(facing);  // peaks at terminator
-      termRing = smoothstep(0.60, 0.92, termRing);
-      // Green tint if habitable temperature range
-      if (uAntistellarTemp < 260.0 && uSubstellarTemp > 320.0) {
-        vec3 habitableGreen = mix(color, vec3(0.22, 0.42, 0.16), 0.25);
-        color = mix(color, habitableGreen, termRing * 0.45);
-      }
-    }
-
-    // Lighting
-    float NdotL_bump = max(dot(bumpN, L), 0.0);
-    float terminator = smoothstep(-0.06, 0.18, NdotL_bump);
-    vec3 ambient = color * 0.04;
-    vec3 lit = color * NdotL_bump * 0.92;
-
-    // Ocean specular glint (subtle sun glitter via wave normals)
-    float spec = 0.0;
-    if (isOcean) {
-      spec = pow(max(dot(bumpN, H), 0.0), 260.0) * 0.35;
-    }
-
-    // Multi-layer clouds — territory-sensitive, with cyclone cells
-    float cloudMask = 0.0;
-    if (uCloudDensity > 0.01) {
-      // Territory-modulated cloud density
-      float localCloud = uCloudDensity;
-      localCloud *= 1.0 + tVolcanic * 0.40;  // convective clouds over volcanoes
-      localCloud *= 1.0 - tHighland * 0.25;  // rain shadow over highlands
-      localCloud *= 1.0 + tMare * 0.15;      // moisture over mare basins
-
-      // Low stratus (large-scale weather systems)
-      float c1l = fbm(pos * 3.8 + vec3(uTime * 0.012, 0.0, uSeed + 30.0));
-      float low = smoothstep(0.52 - localCloud * 0.28, 0.68, c1l);
-
-      // Cyclone cells — spiral cloud structures
-      vec2 cyc = voronoi3D(pos * 2.2 + uSeed * 2.0 + 700.0);
-      float spiral = sin(atan(pos.z, pos.x) * 3.0 + cyc.x * 12.0 + uTime * 0.04);
-      float cyclone = (1.0 - smoothstep(0.0, 0.25, cyc.x)) * (spiral * 0.5 + 0.5);
-      low = max(low, cyclone * localCloud * 0.50);
-
-      // High cirrus (thin wispy, faster drift) — only for thick atmospheres
-      float high = 0.0;
-      if (uAtmThickness > 0.30) {
-        float c2l = fbm(pos * 7.5 + vec3(uTime * 0.020, uTime * 0.008, uSeed + 65.0));
-        high = smoothstep(0.58, 0.75, c2l) * 0.45;
-      }
-      cloudMask = (low * 0.70 + high * 0.30) * localCloud;
-    }
-
-    // Tidal storm vortex — permanent substellar cyclone on 1:1 locked worlds
-    if (uTidallyLocked > 0.5 && uStormIntensity > 0.01) {
-      float stormMask = tidalStorm(pos, L, uTime);
-      cloudMask = max(cloudMask, stormMask * uStormIntensity * 0.85);
-      // Storm also adds a warm glow on the dayside
-      float stormGlow = stormMask * uStormIntensity * 0.15;
-      color = mix(color, vec3(0.85, 0.70, 0.50), stormGlow * terminator);
-    }
-
-    // Lava emission on night side
-    vec3 lavaGlow = vec3(0.0);
-    if (uEmissive > 0.01) {
-      float lavaNoise = fbm(pos * uNoiseScale * 1.6 + uSeed + 80.0);
-      // Cracks pattern from high-frequency domain warp
-      float cracks = warpedFbm(pos * uNoiseScale * 3.0 + uSeed + 120.0);
-      float lavaMask = smoothstep(0.42, 0.58, lavaNoise) * smoothstep(0.38, 0.52, cracks);
-      float nightFactor = 1.0 - terminator;
-      lavaGlow = vec3(1.0, 0.28, 0.04) * lavaMask * nightFactor * uEmissive * 3.5;
-      // Day side: dark cracks visible
-      color = mix(color, vec3(0.06, 0.04, 0.03), lavaMask * 0.4 * terminator);
-    }
-
-    // Compose
-    finalColor = lit * terminator + ambient;
+  // Specular: water gets sharp sun-glint, land gets subtle sheen
+  if(isOcean) {
+    // Schlick fresnel for wider glancing-angle sun glint
+    float f0 = 0.02;
+    float fresnelOcean = f0 + (1.0 - f0) * pow(1.0 - max(dot(bumpN, V), 0.0), 5.0);
+    float spec = pow(max(dot(bumpN,H),0.0), 280.0) * (0.35 + fresnelOcean * 0.45);
     finalColor += vec3(spec) * terminator;
-
-    // Cloud shadows darken terrain, then bright clouds on top
-    finalColor *= (1.0 - cloudMask * 0.35);
-    finalColor += vec3(0.93, 0.95, 0.98) * cloudMask * terminator * 0.30;
-    finalColor += lavaGlow;
-
-    // Atmospheric scattering at the terminator (sunset/sunrise glow)
-    if (uAtmThickness > 0.05) {
-      float sunAngle = NdotL_bump;
-      float termGlow = exp(-(sunAngle * sunAngle) / 0.008) * uAtmThickness;
-      vec3 sunsetColor = vec3(1.0, 0.42, 0.08) * 0.55 + uAtmColor * 0.45;
-      finalColor += sunsetColor * termGlow * 0.28;
-    }
-
-    // Atmosphere handled by separate shell — only faint inner scattering
-    float atmRim = pow(rim, 3.5) * uAtmThickness;
-    finalColor += uAtmColor * atmRim * 0.12;
-
-    // Night-side city lights (habitable worlds with oceans + atmosphere)
-    if (uOceanLevel > 0.1 && uAtmThickness > 0.2) {
-      float nightF = 1.0 - smoothstep(-0.02, 0.06, NdotL_bump);
-      vec2 cv1 = voronoi3D(pos * 38.0 + uSeed * 7.0);
-      float landMask = step(uOceanLevel, h);
-      float cityPop = (1.0 - smoothstep(0.0, 0.055, cv1.x)) * landMask;
-      vec2 cv2 = voronoi3D(pos * 90.0 + uSeed * 11.0);
-      float citySmall = (1.0 - smoothstep(0.0, 0.035, cv2.x)) * landMask * 0.45;
-      vec3 cityColor = vec3(1.0, 0.82, 0.44);
-      finalColor += cityColor * (cityPop + citySmall) * nightF * 0.12;
-    }
-
-    // Subsurface scattering removed — was causing unwanted glossy backlight
-
-    // Aurora at magnetic poles (worlds with atmosphere)
-    if (uAtmThickness > 0.10) {
-      float aurLat = abs(pos.y);
-      float aurZone = smoothstep(0.72, 0.82, aurLat) * (1.0 - smoothstep(0.88, 0.95, aurLat));
-      if (aurZone > 0.01) {
-        float aurWave = sin(pos.x * 20.0 + pos.z * 15.0 + uTime * 0.5 + uSeed * 10.0) * 0.5 + 0.5;
-        float aurFlicker = noise3D(pos * 8.0 + vec3(uTime * 0.3, 0, uSeed)) * 0.7 + 0.3;
-        float nightSide = 1.0 - smoothstep(-0.05, 0.15, NdotL_bump);
-        vec3 aurColor = mix(vec3(0.1, 0.9, 0.3), vec3(0.3, 0.1, 0.8), aurWave);
-        finalColor += aurColor * aurZone * aurFlicker * nightSide * 0.06 * uAtmThickness;
-      }
-    }
-
-    // Organic territory borders — coastlines and tectonic ridges
-    float orgBorder = 0.0;
-    if (uOceanLevel > 0.02) {
-      // Coastline glow (land-sea boundary — the natural continent edge)
-      float coastDist = abs(h - uOceanLevel);
-      float coastGlow = 1.0 - smoothstep(0.0, 0.018, coastDist);
-      // Continental shelf edge (subtle secondary line just below surface)
-      float shelfDist = abs(h - (uOceanLevel - 0.035));
-      float shelfGlow = (1.0 - smoothstep(0.0, 0.012, shelfDist)) * 0.35;
-      orgBorder = max(coastGlow, shelfGlow);
-    }
-    // Tectonic ridge lines on land (mountain crests as natural plate boundaries)
-    if (!isOcean) {
-      float borderSlope = length(vec2(h - hx, h - hz)) * 120.0;
-      float ridgeLine = smoothstep(0.50, 0.95, borderSlope) * 0.45;
-      orgBorder = max(orgBorder, ridgeLine);
-    }
-    vec3 orgBorderC = isOcean ? vec3(0.28, 0.52, 0.78) : vec3(0.50, 0.44, 0.32);
-    finalColor = mix(finalColor, orgBorderC, orgBorder * 0.15);
+    // Wide-angle glint at grazing angles
+    float wideGlint = pow(max(dot(bumpN,H),0.0), 40.0) * fresnelOcean * 0.12;
+    finalColor += vec3(wideGlint) * terminator;
+    // Subsurface scattering blue for shallow water
+    float sss = pow(max(dot(-bumpN,L),0.0),3.0) * 0.08;
+    finalColor += uOceanColor * sss * terminator;
+  } else {
+    float spec = pow(max(dot(bumpN,H),0.0), 40.0) * 0.04;
+    finalColor += vec3(spec) * terminator;
   }
 
-  // ── Science overlay: Temperature map ──────────────────
-  if (uShowTempMap > 0.5) {
-    vec3 sPos = normalize(vObjPos);
-    float localTemp = surfaceTemp(sPos, normalize(uSunDir));
-    vec3 tCol = tempToColor(localTemp);
-    // Strong overlay but preserve lighting structure
-    float lumOrig = dot(finalColor, vec3(0.299, 0.587, 0.114));
-    finalColor = mix(finalColor, tCol * (0.35 + lumOrig * 0.65), 0.72);
+  // ---- LAVA EMISSION ----
+  // [25] Animated flow + pulsing glow along cracks
+  if(uEmissive > 0.01) {
+    // Animated domain warp — lava flows slowly shift
+    vec3 lavaWarp = pos*uNoiseScale*2.0 + uSeed + 80.0;
+    lavaWarp += vec3(sin(uTime*0.08)*0.15, cos(uTime*0.06)*0.12, sin(uTime*0.1)*0.10);
+    float lavaN = fbm3(lavaWarp);
+    // Crack pattern with time-evolving domain warp
+    vec3 crackWarp = pos*uNoiseScale*5.0 + uSeed + 120.0;
+    crackWarp += vec3(sin(uTime*0.05+pos.x*3.0)*0.08, 0.0, cos(uTime*0.07+pos.z*3.0)*0.08);
+    float crackN = noise3D(crackWarp);
+    float lavaMask = smoothstep(0.43,0.58,lavaN)*smoothstep(0.35,0.50,crackN);
+    float nightF = 1.0 - terminator;
+    // Pulsing glow — different regions pulse at different rates
+    float lavaPulse = 0.75 + 0.25 * sin(uTime * 1.2 + lavaN * 12.0 + pos.x * 5.0);
+    // Temperature gradient: white-hot center → orange → dark red edges
+    float lavaTemp = lavaMask * lavaPulse;
+    vec3 lavaHot = vec3(1.0, 0.65, 0.20);  // orange-hot
+    vec3 lavaWhite = vec3(1.0, 0.90, 0.60); // white-hot center
+    vec3 lavaCol = mix(lavaHot, lavaWhite, smoothstep(0.3, 0.7, lavaTemp));
+    finalColor += lavaCol * lavaMask * nightF * uEmissive * 3.5 * lavaPulse;
+    // Dayside: lava still visible but darkened by sunlight
+    finalColor = mix(finalColor, finalColor*0.5, lavaMask*0.35*terminator);
   }
 
-  // ── Science overlay: Mineral abundance map ────────────
-  if (uShowMineralMap > 0.5) {
-    vec3 sPos = normalize(vObjPos);
-    vec3 mCol = mineralColor(sPos);
-    float lumOrig = dot(finalColor, vec3(0.299, 0.587, 0.114));
-    finalColor = mix(finalColor, mCol * (0.30 + lumOrig * 0.70), 0.75);
+  // ---- DUAL CLOUD LAYERS (latitude-aware rotation) ----
+  if(uCloudDensity > 0.01) {
+    // Layer 1: Low cumulus (slower, thicker, larger scale)
+    vec3 cp1 = cloudWarp(pos, 0.004);
+    float lo = noise3D(cp1*4.0+uSeed+30.0)
+             + noise3D(cp1*8.0+uSeed+31.0)*0.5
+             + noise3D(cp1*16.0+uSeed+32.0)*0.25;
+    lo /= 1.75;
+    float cumulus = smoothstep(0.50-uCloudDensity*0.26, 0.70, lo)*uCloudDensity;
+
+    // Layer 2: High cirrus (faster, thinner, wispy)
+    vec3 cp2 = cloudWarp(pos, 0.007);
+    float hi = noise3D(cp2*6.0+uSeed+40.0)
+             + noise3D(cp2*12.0+uSeed+41.0)*0.5;
+    hi /= 1.5;
+    float cirrus = smoothstep(0.55, 0.78, hi) * uCloudDensity * 0.5;
+
+    float totalCloud = min(cumulus + cirrus, 0.90);
+
+    // [11] Cloud edge softening — noise-based alpha feathering
+    float cloudEdgeNoise = noise3D(pos * 28.0 + uSeed + 55.0) * 0.5 + 0.5;
+    totalCloud *= smoothstep(0.0, 0.15, totalCloud) * (0.85 + 0.15 * cloudEdgeNoise);
+    cumulus *= smoothstep(0.0, 0.10, cumulus) * (0.88 + 0.12 * cloudEdgeNoise);
+    cirrus *= smoothstep(0.0, 0.08, cirrus);
+
+    // Cloud lighting: bright on dayside, warm sunset at terminator,
+    // atmospheric blue tint in shadows, refraction glow past terminator
+    vec3 cloudCol = vec3(0.95,0.97,0.99);
+    float cSunA = dot(N,L);
+    float cSunDay = max(cSunA, 0.0);
+    float cTerm = exp(-pow(cSunA-0.03,2.0)/0.028); // sunset band
+    vec3 sunsetC = vec3(1.0,0.60,0.28)*0.45 + uAtmColor*0.55;
+    cloudCol = mix(cloudCol, sunsetC, cTerm*0.30);
+    // Clouds fully dark on night side — no backlit glow
+    cloudCol *= smoothstep(-0.02,0.15,cSunA);
+
+    // High cirrus slightly different tint (ice crystals)
+    vec3 cirrusCol = mix(cloudCol, vec3(0.90,0.92,1.0), 0.3);
+
+    // [10] Cloud self-shadowing — higher clouds darken terrain beneath
+    float cloudShadow = 1.0 - totalCloud * 0.35 * max(dot(N,L), 0.0);
+    finalColor *= cloudShadow;
+
+    // [28] Cloud shadow on ocean — visible shadow patterns on water below
+    if(isOcean) {
+      // Offset cloud position toward sun to simulate shadow parallax
+      vec3 shadowPos = pos + L * 0.008; // slight offset toward light
+      vec3 sp1 = cloudWarp(shadowPos, 0.004);
+      float sLo = noise3D(sp1*4.0+uSeed+30.0)
+               + noise3D(sp1*8.0+uSeed+31.0)*0.5;
+      sLo /= 1.5;
+      float shadowMask = smoothstep(0.50-uCloudDensity*0.26, 0.70, sLo)*uCloudDensity;
+      // Darken ocean where cloud shadow falls (only on day side)
+      finalColor *= 1.0 - shadowMask * 0.20 * max(dot(N,L), 0.0);
+    }
+
+    finalColor += cloudCol * cumulus * 0.45;
+    finalColor += cirrusCol * cirrus * 0.30;
   }
 
-  // Tone map (Reinhard) + gamma
-  finalColor = finalColor / (finalColor + vec3(1.0));
-  finalColor = pow(finalColor, vec3(0.4545));
+  // Tidal storm vortex
+  if(uTidallyLocked > 0.5 && uStormIntensity > 0.01) {
+    float sDist = acos(clamp(dot(pos,L),-1.0,1.0));
+    float sMask = 1.0-smoothstep(0.0,radians(uStormSize),sDist);
+    float sSpiral = sin(atan(pos.z,pos.x)*5.0+sDist*15.0+uTime*0.06);
+    sMask *= (sSpiral*0.3+0.7);
+    finalColor += vec3(0.90,0.92,0.95)*sMask*uStormIntensity*0.24;
+  }
+
+  // ---- ATMOSPHERE (surface-side Rayleigh + terminator + refraction) ----
+  // Supplements the ATM shell. Tightly limb-gated to avoid diffuse haze.
+  if(uAtmThickness > 0.05) {
+    float sunAngle = max(dot(N,L),0.0);
+    float dayTerm  = smoothstep(-0.12,0.30,dot(N,L));
+
+    // Hard limb gate — nothing visible inside 55% from edge
+    float surfLimb = smoothstep(0.55, 0.92, rim);
+
+    // Rayleigh sky-light scattered down onto the surface
+    vec3 rayleighC = uAtmColor * vec3(0.22, 0.52, 1.0);
+    float dayRim   = pow(rim,3.5)*uAtmThickness*dayTerm*surfLimb;
+    finalColor += rayleighC * dayRim * 0.22;
+
+    // Aerial perspective — only near the very edge
+    float aerial = pow(rim,3.0)* uAtmThickness * dayTerm * surfLimb * 0.12;
+    finalColor = mix(finalColor, uAtmColor * 0.8 + vec3(0.05,0.08,0.15), aerial);
+
+    // Terminator sunset/sunrise glow — strongest near limb
+    float termA    = dot(N,L) + 0.03;
+    float termGlow = exp(-termA*termA / 0.028)*uAtmThickness;
+    vec3 sunsetCol = vec3(1.0,0.50,0.18)*0.40 + uAtmColor*0.60;
+    finalColor += sunsetCol * termGlow * surfLimb * 0.15;
+
+    // Atmospheric refraction past terminator
+    float refrA    = dot(N,L) + 0.07;
+    float refrGlow = exp(-refrA*refrA / 0.006) * step(-0.14, dot(N,L));
+    finalColor += vec3(0.70,0.45,0.20) * refrGlow * uAtmThickness * surfLimb * 0.05;
+
+    // Night-side atmospheric glow — limb-gated
+    float nightRim = pow(rim,3.0)*max(-dot(N,L),0.0)*uAtmThickness*surfLimb;
+    finalColor += uAtmColor * nightRim * 0.06;
+    finalColor += vec3(0.05,0.10,0.04) * nightRim * 0.08;
+  }
+
+  // ---- NIGHT-SIDE CITY LIGHTS (placeholder — will cluster around user-placed objects) ----
+  if(uOceanLevel > 0.1 && uAtmThickness > 0.2) {
+    float nightF = 1.0-smoothstep(-0.02,0.06,NdotL);
+    float landM = step(effOcean,h);
+    float cityN = fbm3(pos*38.0+uSeed*7.0);
+    float cityPop = smoothstep(0.58,0.70,cityN)*landM;
+    finalColor += vec3(1,0.82,0.44)*cityPop*nightF*0.10;
+  }
+
+  // ---- AURORA ----
+  // [23] Proper curtain shapes with vertical structure & altitude-dependent color
+  if(uAtmThickness > 0.10) {
+    float aurZone = smoothstep(0.72,0.82,absLat)*(1.0-smoothstep(0.88,0.95,absLat));
+    if(aurZone > 0.01) {
+      // Curtain folds — undulating wave along longitude, animated drift
+      float lon = atan(pos.z, pos.x);
+      float curtainWave = sin(lon * 8.0 + uTime * 0.6 + uSeed * 3.0) * 0.5 + 0.5;
+      curtainWave *= sin(lon * 13.0 + uTime * 0.35 + uSeed * 7.0) * 0.3 + 0.7;
+      // Vertical shimmer — rapid flicker simulating electron precipitation
+      float shimmer = noise3D(pos * 20.0 + vec3(0, uTime * 2.5, uSeed * 10.0));
+      shimmer = smoothstep(0.3, 0.7, shimmer);
+      float nightSide = 1.0 - smoothstep(-0.05, 0.15, NdotL);
+      // Altitude-dependent color: green (557nm oxygen) at base,
+      // red/purple (630nm oxygen + N2) at altitude
+      float altFrac = smoothstep(0.72, 0.92, absLat); // proxy for altitude within auroral zone
+      vec3 aurBase = vec3(0.1, 0.9, 0.3);    // green — most common
+      vec3 aurMid  = vec3(0.15, 0.6, 0.5);   // teal transition
+      vec3 aurTop  = vec3(0.5, 0.1, 0.7);    // purple/red — high altitude
+      vec3 aurColor = mix(aurBase, aurMid, smoothstep(0.0, 0.5, altFrac));
+      aurColor = mix(aurColor, aurTop, smoothstep(0.5, 1.0, altFrac));
+      float aurIntensity = aurZone * curtainWave * shimmer * nightSide;
+      finalColor += aurColor * aurIntensity * 0.09 * uAtmThickness;
+    }
+  }
+
+  // ---- PLANETSHINE ----
+  if(length(uPlanetShineColor) > 0.01) {
+    float nightFade = 1.0-smoothstep(-0.15,0.10,NdotL);
+    float pRim = pow(1.0-max(dot(N,V),0.0),2.0)*0.5+0.5;
+    finalColor += uPlanetShineColor*nightFade*pRim*0.14;
+  }
+
+  // ---- SCIENCE OVERLAYS ----
+  if(uShowTempMap > 0.5) {
+    float sT = mix(uPolarTemp,uEquatorTemp,1.0-absLat);
+    if(uTidallyLocked>0.5) sT=mix(uAntistellarTemp,uSubstellarTemp,dot(pos,L)*0.5+0.5);
+    vec3 tC = sT<273.0 ? mix(vec3(0,0,1),vec3(0,1,1),sT/273.0)
+            : sT<373.0 ? mix(vec3(0,1,0),vec3(1,1,0),(sT-273.0)/100.0)
+            : mix(vec3(1,0.5,0),vec3(1,0,0),min((sT-373.0)/500.0,1.0));
+    finalColor = mix(finalColor, tC*(0.35+dot(finalColor,vec3(0.3,0.6,0.1))*0.65), 0.72);
+  }
+  if(uShowMineralMap > 0.5) {
+    vec3 mC = vec3(uIronPct,uSilicatePct,uWaterIcePct)*0.5+0.3;
+    mC += vec3(uCarbonPct*0.3,uKreepIndex*0.5,0);
+    finalColor = mix(finalColor, mC*(0.3+dot(finalColor,vec3(0.3,0.6,0.1))*0.7), 0.75);
+  }
+
+  // ---- TONE MAP (ACES-inspired, [19] adjusted shoulder/toe) + GAMMA ----
+  // Slightly lifted toe for richer shadow detail, brighter mid highlights
+  finalColor = finalColor * (finalColor * 2.51 + 0.04) / (finalColor * (finalColor * 2.43 + 0.55) + 0.14);
+  // [20] Night-side ambient floor — ensure terrain never goes pure black
+  finalColor = max(finalColor, vec3(0.008, 0.008, 0.012));
+  finalColor = pow(clamp(finalColor, 0.0, 1.0), vec3(0.4545));
 
   gl_FragColor = vec4(finalColor, 1.0);
 }
 `;
-
-/* ── Atmosphere Shell Shaders ───────────────────────────── */
+/* ── Atmosphere Shell Shaders — Ray-march scattering ────────── */
 
 const ATM_VERT = /* glsl */ `
-varying vec3 vNormal;
-varying vec3 vViewDir;
-varying float vFresnel;
+varying vec3 vWorldPos;
+varying vec3 vPlanetCenter;
+varying float vPlanetR;
+varying float vAtmR;
+
 void main() {
-  vNormal = normalize(normalMatrix * normal);
-  vec4 worldPos = modelMatrix * vec4(position, 1.0);
-  vViewDir = normalize(cameraPosition - worldPos.xyz);
-  vFresnel = 1.0 - max(dot(vNormal, vViewDir), 0.0);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorldPos = wp.xyz;
+  // Planet center in world space (translation column of model matrix)
+  vPlanetCenter = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  // Planet surface radius in world units (= geometry scale factor × 1.0)
+  vPlanetR = length((modelMatrix * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
+  // Atmosphere radius (this sphere's geometry radius × scale)
+  vAtmR = length(wp.xyz - vPlanetCenter);
+  gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
 
 const ATM_FRAG = /* glsl */ `
 precision highp float;
-uniform vec3 uAtmColor;
+uniform vec3  uAtmColor;
 uniform float uAtmThickness;
-uniform vec3 uSunDir;
-varying vec3 vNormal;
-varying vec3 vViewDir;
-varying float vFresnel;
+uniform vec3  uSunDir;
+uniform vec3  uPlanetShineColor;
+
+varying vec3 vWorldPos;
+varying vec3 vPlanetCenter;
+varying float vPlanetR;
+varying float vAtmR;
+
+// =============================================================
+// Atmosphere v4 — 8-sample view-ray march through atmosphere
+// volume with analytical sun optical depth.  Produces correct
+// limb brightening, sunset colours, and visible halo.
+// =============================================================
+
+#define NUM_STEPS 8
+#define PI 3.14159265
+
+// Ray-sphere intersection → (tNear, tFar); both < 0 = miss
+vec2 raySphere(vec3 ro, vec3 rd, vec3 c, float r) {
+  vec3 oc = ro - c;
+  float b = dot(oc, rd);
+  float disc = b * b - (dot(oc, oc) - r * r);
+  if (disc < 0.0) return vec2(-1.0);
+  float s = sqrt(disc);
+  return vec2(-b - s, -b + s);
+}
 
 void main() {
-  vec3 N = normalize(vNormal);
-  vec3 L = normalize(uSunDir);
-  float rim = vFresnel;
-  float NdotL = dot(N, L);
+  vec3  center = vPlanetCenter;
+  float rP = vPlanetR;                        // planet surface radius
+  float rA = vAtmR;                           // atmosphere outer radius
+  float H  = rA - rP;                         // atmosphere height
+  if (H < 0.0001) discard;
 
-  // Rayleigh-like scattering: strong at limb, colored by atmosphere
-  float scatter = pow(rim, 2.2);
+  vec3 ro  = cameraPosition;
+  vec3 rd  = normalize(vWorldPos - cameraPosition);
+  vec3 sun = normalize(uSunDir);
+  float mu = dot(rd, sun);                    // view-sun cosine
 
-  // Day-night asymmetry: brighter on sunlit side
-  float dayFactor = smoothstep(-0.15, 0.35, NdotL);
+  // ── Intersect view ray with atmosphere and planet ──────────
+  vec2 tAtm = raySphere(ro, rd, center, rA);
+  vec2 tPln = raySphere(ro, rd, center, rP);
 
-  // Forward scattering (bright ring when star is behind planet)
-  float backScatter = pow(max(-NdotL, 0.0), 2.0) * pow(rim, 1.5) * 0.30;
+  float tNear = max(tAtm.x, 0.0);
+  float tFar  = tAtm.y;
+  if (tPln.x > 0.0) tFar = min(tFar, tPln.x); // stop at planet surface
+  if (tFar <= tNear) discard;
 
-  // Terminator glow band
-  float termGlow = exp(-pow(NdotL - 0.02, 2.0) / 0.015) * 0.20;
+  float ds = (tFar - tNear) / float(NUM_STEPS);
 
-  vec3 color = uAtmColor * (scatter * dayFactor * 0.85 + backScatter + termGlow);
+  // ── Scattering coefficients (tuned for geometry scale) ─────
+  float invH = 1.0 / H;
 
-  // Alpha: transparent at center, visible at limb
-  float alpha = (scatter * 0.70 + backScatter * 0.35) * uAtmThickness;
-  alpha = clamp(alpha, 0.0, 0.50);
+  // Rayleigh: λ^-4 wavelength dependence.  Mild tint by uAtmColor so
+  // blue atmospheres stay strongly blue while exotic atm colours show.
+  // [7] Reduced magnitude to avoid oversaturated blue halos
+  vec3  bR = vec3(0.06, 0.16, 0.40) * invH * uAtmThickness;
+  bR *= (0.50 + 0.50 * uAtmColor);
 
-  gl_FragColor = vec4(color, alpha);
+  // Mie: wavelength-independent scatter, coloured by atmosphere haze
+  vec3 bM = uAtmColor * 0.035 * invH * uAtmThickness;
+
+  // Scale heights (fraction of atmosphere height)
+  float hR = 0.35;    // Rayleigh
+  float hM = 0.12;    // Mie (concentrated lower)
+
+  // ── Phase functions ────────────────────────────────────────
+  float phR = (3.0 / (16.0 * PI)) * (1.0 + mu * mu);
+
+  // Cornette-Shanks Mie phase (g = 0.55 for gentle forward glow, no hot-spot)
+  float g   = 0.55;
+  float g2  = g * g;
+  float phM = (3.0 / (8.0 * PI)) * ((1.0 - g2) * (1.0 + mu * mu))
+            / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * g * mu, 1.5));
+
+  // [9] Back-scatter lobe (g = -0.25) for realistic back-lit haze
+  float gB  = -0.25;
+  float gB2 = gB * gB;
+  float phMback = (3.0 / (8.0 * PI)) * ((1.0 - gB2) * (1.0 + mu * mu))
+               / ((2.0 + gB2) * pow(1.0 + gB2 - 2.0 * gB * mu, 1.5));
+  phM = phM * 0.90 + phMback * 0.10; // blend forward + backward lobes
+
+  // ── Multi-scatter approximation ─────────────────────────────
+  // Real atmospheres scatter blue light back into long view paths
+  // via higher-order bounces.  We approximate this by dampening
+  // the view-path extinction (ms < 1).  Sun-path extinction stays
+  // at full strength so sunsets are correctly reddened.
+  float ms = 0.25;
+
+  // ── March along view ray ───────────────────────────────────
+  vec3  scatter = vec3(0.0);
+  float odR = 0.0, odM = 0.0;           // accumulated view optical depth
+
+  for (int i = 0; i < NUM_STEPS; i++) {
+    float t  = tNear + (float(i) + 0.5) * ds;
+    vec3  P  = ro + rd * t;
+    float alt = (length(P - center) - rP) / H; // normalised altitude 0-1
+
+    float dR = exp(-alt / hR) * ds;      // Rayleigh density × step
+    float dM = exp(-alt / hM) * ds;      // Mie density × step
+    odR += dR;
+    odM += dM;
+
+    // ── Sun illumination reaching this sample ──────────────
+    vec3 Pn     = normalize(P - center);
+    float sunCos = dot(Pn, sun);
+
+    if (sunCos > -0.08) {
+      // Analytical sun path optical depth (plane-parallel approx)
+      float sf = 1.0 / max(sunCos + 0.08, 0.012);
+      sf = min(sf, 55.0);                 // cap to prevent fireflies
+      float sR = exp(-alt / hR) * H * hR * sf;
+      float sM = exp(-alt / hM) * H * hM * sf;
+
+      // Sun-path extinction at full strength (correct sunset reddening)
+      vec3 sunAttn = exp(-(bR * sR + bM * sM));
+
+      // View-path extinction with multi-scatter dampening
+      // (prevents blue from being killed along long limb rays)
+      vec3 viewAttn = exp(-(bR * odR + bM * odM) * ms);
+
+      // [8] Sunset color injection near terminator
+      // When sun is near horizon (sunCos ~ 0), inject orange/red tint
+      float sunsetFactor = exp(-sunCos * sunCos / 0.025) * step(-0.08, sunCos);
+      vec3 sunsetTint = mix(vec3(1.0), vec3(1.0, 0.55, 0.22), sunsetFactor * 0.25);
+
+      scatter += (dR * bR * phR + dM * bM * phM) * sunAttn * viewAttn * sunsetTint;
+    }
+  }
+
+  // ── Night-side airglow (emission, no sun needed) ───────────
+  vec3  fragN   = normalize(vWorldPos - center);
+  float nightF  = max(-dot(fragN, sun), 0.0);
+  float rim     = 1.0 - max(dot(fragN, normalize(cameraPosition - center)), 0.0);
+  scatter += vec3(0.06, 0.15, 0.05) * pow(rim, 3.5) * nightF * uAtmThickness * 0.22;
+
+  // ── Planet-shine ───────────────────────────────────────────
+  if (length(uPlanetShineColor) > 0.01) {
+    scatter += uPlanetShineColor * pow(rim, 3.0) * nightF * uAtmThickness * 0.10;
+  }
+
+  // ── Alpha from total view optical depth (dampened) ─────────
+  float od = dot(bR * odR + bM * odM, vec3(0.33)) * ms;
+  float alpha = 1.0 - exp(-od * 2.5);
+  // Ensure bright scatter regions stay visible after blending
+  alpha = max(alpha, length(scatter) * 0.45);
+  float maxA = 0.35 + uAtmThickness * 0.55;
+
+  gl_FragColor = vec4(scatter, clamp(alpha, 0.0, maxA));
 }
 `;
 
@@ -2150,6 +1934,8 @@ interface Props {
   tempDistribution?: TempDistribution;
   /** Mineral abundance data from backend */
   mineralAbundance?: MineralAbundance;
+  /** Planetshine — colored reflected light from nearby parent planet (rgb 0-1) */
+  planetShineColor?: [number, number, number];
 }
 
 /** Ice-dominated world types */
@@ -2177,16 +1963,24 @@ export function ProceduralPlanet({
   showMineralMap = false,
   tempDistribution,
   mineralAbundance,
+  planetShineColor,
 }: Props & { displacement?: number; segments?: number }) {
   const groupRef = useRef<THREE.Group>(null!);
   const meshRef = useRef<THREE.Mesh>(null!);
+  // Track latest sunDirection prop for per-frame uniform updates
+  const sunDirRef = useRef(sunDirection);
+  sunDirRef.current = sunDirection;
 
   const baseVis = V[planetType] || V['rocky'];
   const vis = deriveWorldVisuals(baseVis, { temperature, mass, tidalHeating, starSpectralClass });
 
   // ── World genome diversity — slot-machine combinatorial colors ──
-  if (seed && !NO_GENOME.has(planetType)) {
-    applyWorldGenome(vis, seed, temperature, mass ?? 1);
+  if (seed) {
+    if (GAS_TYPES.has(planetType)) {
+      applyGasGenome(vis, seed);
+    } else if (!NO_GENOME.has(planetType)) {
+      applyWorldGenome(vis, seed, temperature, mass ?? 1);
+    }
   }
 
   // ── Seed-based ocean / terrain diversity ───────────────────────
@@ -2239,6 +2033,58 @@ export function ProceduralPlanet({
       ? { latitude_deg: 0, longitude_deg: 0, diameter_deg: 45, intensity: 0.75 }
       : undefined);
 
+  // ── Texture-informed coloring: load reference textures ──────────
+  // Gas giants don't use texture triplets. For solid worlds, we load
+  // 3 textures (low/mid/high) that inform the procedural color palette.
+  const triplet = useMemo(() => {
+    if (isGas || TEX_GAS_TYPES.has(planetType)) return null;
+    return getTextureTriplet(planetType);
+  }, [planetType, isGas]);
+
+  const placeholderTex = useMemo(() => {
+    const t = new THREE.DataTexture(
+      new Uint8Array([128, 128, 128, 255]), 1, 1, THREE.RGBAFormat
+    );
+    t.needsUpdate = true;
+    return t;
+  }, []);
+
+  const [textures, setTextures] = useState<{
+    low: THREE.Texture; mid: THREE.Texture; high: THREE.Texture;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!triplet) { setTextures(null); return; }
+    const loader = new THREE.TextureLoader();
+    let cancelled = false;
+    const loaded: Partial<{ low: THREE.Texture; mid: THREE.Texture; high: THREE.Texture }> = {};
+    let count = 0;
+    const onDone = () => {
+      count++;
+      if (count === 3 && !cancelled && loaded.low && loaded.mid && loaded.high) {
+        setTextures(loaded as { low: THREE.Texture; mid: THREE.Texture; high: THREE.Texture });
+      }
+    };
+    const loadOne = (id: string, key: 'low' | 'mid' | 'high') => {
+      loader.load(
+        texUrl(id),
+        (tex) => { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; loaded[key] = tex; onDone(); },
+        undefined,
+        () => { loaded[key] = placeholderTex; onDone(); }  // fallback on error
+      );
+    };
+    loadOne(triplet.texLow, 'low');
+    loadOne(triplet.texMid, 'mid');
+    loadOne(triplet.texHigh, 'high');
+    return () => { cancelled = true; };
+  }, [triplet, placeholderTex]);
+
+  const texLow  = textures?.low  ?? placeholderTex;
+  const texMid  = textures?.mid  ?? placeholderTex;
+  const texHigh = textures?.high ?? placeholderTex;
+  const texInfluence = triplet?.texInfluence ?? 0;
+  const triplanarScale = triplet?.triplanarScale ?? 3.0;
+
   const material = useMemo(() => {
     return new THREE.ShaderMaterial({
       vertexShader: VERT,
@@ -2258,6 +2104,8 @@ export function ProceduralPlanet({
         uNoiseScale: { value: vis.noiseScale },
         uSunDir: { value: new THREE.Vector3(sunDirection[0], sunDirection[1], sunDirection[2]).normalize() },
         uIsGas: { value: isGas ? 1.0 : 0.0 },
+        uTerrainAge: { value: vis.terrainAge ?? 0.5 },
+        uTectonics: { value: vis.tectonicsLevel ?? 0.0 },
         uTerrainAgeV: { value: vis.terrainAge ?? 0.5 },
         uTectonicsV: { value: vis.tectonicsLevel ?? 0.0 },
         uSeed: { value: seed * 137.0 },
@@ -2287,6 +2135,9 @@ export function ProceduralPlanet({
         uWaterIcePct: { value: mineralAbundance?.water_ice_pct ?? 0.0 },
         uKreepIndex: { value: mineralAbundance?.kreep_index ?? 0.0 },
         uCarbonPct: { value: mineralAbundance?.carbon_pct ?? 0.0 },
+        uPlanetShineColor: { value: new THREE.Vector3(
+          planetShineColor?.[0] ?? 0, planetShineColor?.[1] ?? 0, planetShineColor?.[2] ?? 0
+        ) },
         // Vertex shader displacement uniforms
         uDisplacement: { value: isGas ? 0 : displacement },
         uSeedV: { value: seed * 137.0 },
@@ -2297,68 +2148,23 @@ export function ProceduralPlanet({
         uMountainHeightV: { value: vis.mountainHeight ?? 0 },
         uValleyDepthV: { value: vis.valleyDepth ?? 0 },
         uVolcanismV: { value: vis.volcanism ?? 0 },
+        // Texture-informed coloring uniforms
+        uTexLow: { value: texLow },
+        uTexMid: { value: texMid },
+        uTexHigh: { value: texHigh },
+        uTexInfluence: { value: texInfluence },
+        uTriplanarScale: { value: triplanarScale },
       },
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planetType, seed, cs[0], cs[1], cs[2], mass, tidalHeating, starSpectralClass,
       tidallyLocked, spinOrbit32, showTempMap, showMineralMap]);
 
-  // ── Thick atmosphere layers (Venus / super-Earth soupy atmospheres) ──
-  // Multiple concentric cloud shells with different opacity/color for volumetric feel
-  const thickAtmLayers = useMemo(() => {
-    if (isGas || vis.atmThickness < 0.60) return null;
-    const depth = vis.atmThickness; // 0.60 → 0.95+
-    const layers: { radius: number; color: [number, number, number]; opacity: number }[] = [];
-
-    // Inner haze layer — dense, tinted darker
-    layers.push({
-      radius: 1.008 + depth * 0.015,
-      color: [vis.atmColor[0] * 0.7, vis.atmColor[1] * 0.6, vis.atmColor[2] * 0.5],
-      opacity: 0.10 + (depth - 0.6) * 0.35, // 0.10 → 0.22
-    });
-
-    // Middle cloud deck — main visible layer, brightest
-    layers.push({
-      radius: 1.020 + depth * 0.035,
-      color: [
-        Math.min(1, vis.atmColor[0] * 1.1 + 0.08),
-        Math.min(1, vis.atmColor[1] * 1.0 + 0.04),
-        Math.min(1, vis.atmColor[2] * 0.9),
-      ],
-      opacity: 0.08 + (depth - 0.6) * 0.28, // 0.08 → 0.18
-    });
-
-    // Outer high-altitude haze — diffuse, lighter colored
-    if (depth > 0.75) {
-      layers.push({
-        radius: 1.040 + depth * 0.05,
-        color: [
-          Math.min(1, vis.atmColor[0] * 0.5 + 0.35),
-          Math.min(1, vis.atmColor[1] * 0.5 + 0.30),
-          Math.min(1, vis.atmColor[2] * 0.5 + 0.25),
-        ],
-        opacity: 0.04 + (depth - 0.75) * 0.18,
-      });
-    }
-
-    return layers.map((l, i) => new THREE.ShaderMaterial({
-      vertexShader: ATM_VERT,
-      fragmentShader: ATM_FRAG,
-      uniforms: {
-        uAtmColor: { value: new THREE.Color(l.color[0], l.color[1], l.color[2]) },
-        uAtmThickness: { value: l.opacity * 2.5 },
-        uSunDir: { value: new THREE.Vector3(sunDirection[0], sunDirection[1], sunDirection[2]).normalize() },
-      },
-      transparent: true,
-      side: i === 0 ? THREE.DoubleSide : THREE.FrontSide,
-      depthWrite: false,
-    }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planetType, seed]);
-
   // Atmosphere shell material (solid worlds only, not gas giants)
+  // Single ray-march shell handles all volumetric depth — no thick layers needed
   const atmMaterial = useMemo(() => {
     if (vis.atmThickness < 0.08 || isGas) return null;
+    const psc = planetShineColor || [0, 0, 0];
     return new THREE.ShaderMaterial({
       vertexShader: ATM_VERT,
       fragmentShader: ATM_FRAG,
@@ -2366,13 +2172,27 @@ export function ProceduralPlanet({
         uAtmColor: { value: new THREE.Color(vis.atmColor[0], vis.atmColor[1], vis.atmColor[2]) },
         uAtmThickness: { value: vis.atmThickness },
         uSunDir: { value: new THREE.Vector3(sunDirection[0], sunDirection[1], sunDirection[2]).normalize() },
+        uPlanetShineColor: { value: new THREE.Vector3(psc[0], psc[1], psc[2]) },
       },
       transparent: true,
       side: THREE.FrontSide,
       depthWrite: false,
+      blending: THREE.NormalBlending,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planetType, seed]);
+
+  // ── Update texture uniforms when async textures arrive ──────
+  useEffect(() => {
+    if (material.uniforms.uTexLow) {
+      material.uniforms.uTexLow.value = texLow;
+      material.uniforms.uTexMid.value = texMid;
+      material.uniforms.uTexHigh.value = texHigh;
+      material.uniforms.uTexInfluence.value = texInfluence;
+      material.uniforms.uTriplanarScale.value = triplanarScale;
+      material.uniformsNeedUpdate = true;
+    }
+  }, [material, texLow, texMid, texHigh, texInfluence, triplanarScale]);
 
   useFrame((_, delta) => {
     // Scale rotation + shader time with shared orbit speed so pause/speed controls work
@@ -2380,8 +2200,18 @@ export function ProceduralPlanet({
     if (groupRef.current) {
       groupRef.current.rotation.y += delta * rotationSpeed * spd;
     }
-    material.uniforms.uTime.value += delta * spd;
+    material.uniforms.uTime.value += delta; // always animate (gas giants, lava, clouds)
+    // Update sun direction each frame so orrery planets light correctly
+    const sd = sunDirRef.current;
+    const sdVec = material.uniforms.uSunDir.value as THREE.Vector3;
+    sdVec.set(sd[0], sd[1], sd[2]).normalize();
     material.uniformsNeedUpdate = true;
+    // Also update atmosphere shell sun direction
+    if (atmMaterial) {
+      const atmSd = atmMaterial.uniforms.uSunDir.value as THREE.Vector3;
+      atmSd.set(sd[0], sd[1], sd[2]).normalize();
+      atmMaterial.uniformsNeedUpdate = true;
+    }
   });
 
   return (
@@ -2391,22 +2221,9 @@ export function ProceduralPlanet({
       </mesh>
       {atmMaterial && (
         <mesh material={atmMaterial}>
-          <sphereGeometry args={[1.015 + vis.atmThickness * 0.04, 48, 32]} />
+          <sphereGeometry args={[1.02 + vis.atmThickness * 0.06, 64, 48]} />
         </mesh>
       )}
-      {/* Thick atmosphere: multiple cloud deck shells */}
-      {thickAtmLayers?.map((mat, i) => {
-        const r = i === 0
-          ? 1.008 + vis.atmThickness * 0.015
-          : i === 1
-            ? 1.020 + vis.atmThickness * 0.035
-            : 1.040 + vis.atmThickness * 0.05;
-        return (
-          <mesh key={`thick-atm-${i}`} material={mat}>
-            <sphereGeometry args={[r, 40, 28]} />
-          </mesh>
-        );
-      })}
     </group>
   );
 }

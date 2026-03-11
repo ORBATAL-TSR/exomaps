@@ -1,0 +1,330 @@
+{
+  "gas-giant": {
+    "surfaceTexture": "combined_jupiter",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "gas-giant"
+  },
+  "super-jupiter": {
+    "surfaceTexture": "combined_jupiter",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "gas-giant"
+  },
+  "hot-jupiter": {
+    "surfaceTexture": "combined_hot_jupiter",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "gas-giant"
+  },
+  "neptune-like": {
+    "surfaceTexture": "combined_neptune",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "gas-giant"
+  },
+  "warm-neptune": {
+    "surfaceTexture": "combined_neptune",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "gas-giant"
+  },
+  "mini-neptune": {
+    "surfaceTexture": "combined_uranus",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "gas-giant"
+  },
+  "sub-neptune": {
+    "surfaceTexture": "combined_uranus",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "gas-giant"
+  },
+  "rocky": {
+    "surfaceTexture": "surface_apnean_cratered",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "earth-like": {
+    "surfaceTexture": "surface_gaian_earth",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "combined_living_earth",
+    "cloudMap": "aerosol_aquean",
+    "fallbackStyle": "earth-like"
+  },
+  "super-earth": {
+    "surfaceTexture": "surface_gaian_superearth",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "aerosol_aquean",
+    "fallbackStyle": "earth-like"
+  },
+  "sub-earth": {
+    "surfaceTexture": "surface_apnean_cratered",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "venus": {
+    "surfaceTexture": "combined_venus",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "venus"
+  },
+  "desert-world": {
+    "surfaceTexture": "surface_arean_desert",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "desert-world"
+  },
+  "ocean-world": {
+    "surfaceTexture": "surface_abyssal",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "aerosol_aquean",
+    "fallbackStyle": "ocean-world"
+  },
+  "lava-world": {
+    "surfaceTexture": "surface_lava_55cancri",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "lava-world"
+  },
+  "iron-planet": {
+    "surfaceTexture": "surface_apnean_iron",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "iron-planet"
+  },
+  "carbon-planet": {
+    "surfaceTexture": "surface_apnean_carbon",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "carbon-planet"
+  },
+  "hycean": {
+    "surfaceTexture": "surface_hycean",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "aerosol_aquean",
+    "fallbackStyle": "hycean"
+  },
+  "eyeball-world": {
+    "surfaceTexture": "surface_eyeball_tidally_locked",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "eyeball-world"
+  },
+  "ice-dwarf": {
+    "surfaceTexture": "surface_europan",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "ice-dwarf"
+  },
+  "chthonian": {
+    "surfaceTexture": "surface_chthonian",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "chthonian"
+  },
+  "moon-rocky": {
+    "surfaceTexture": "surface_apnean_cratered",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "moon-icy": {
+    "surfaceTexture": "surface_europan",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "ice-dwarf"
+  },
+  "moon-volcanic": {
+    "surfaceTexture": "surface_lava_young_earth",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "lava-world"
+  },
+  "moon-ocean": {
+    "surfaceTexture": "surface_abyssal",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "ocean-world"
+  },
+  "moon-desert": {
+    "surfaceTexture": "surface_arean_cold",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "desert-world"
+  },
+  "moon-iron": {
+    "surfaceTexture": "surface_apnean_iron",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "iron-planet"
+  },
+  "moon-carbon-soot": {
+    "surfaceTexture": "surface_apnean_carbon",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "carbon-planet"
+  },
+  "moon-subsurface-ocean": {
+    "surfaceTexture": "surface_europan",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "ice-dwarf"
+  },
+  "moon-magma-ocean": {
+    "surfaceTexture": "surface_lava_55cancri",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "lava-world"
+  },
+  "moon-atmosphere-thin": {
+    "surfaceTexture": "surface_arean_cold",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "moon-atmosphere-thick": {
+    "surfaceTexture": "combined_titan",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "venus"
+  },
+  "moon-tidally-heated": {
+    "surfaceTexture": "surface_lava_young_earth",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "lava-world"
+  },
+  "moon-captured": {
+    "surfaceTexture": "surface_apnean_cratered",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "moon-trojan": {
+    "surfaceTexture": "surface_apnean_cratered",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "moon-ring-shepherd": {
+    "surfaceTexture": "surface_apnean_ice",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "ice-dwarf"
+  },
+  "moon-binary": {
+    "surfaceTexture": "surface_apnean_cratered",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "moon-earth-like": {
+    "surfaceTexture": "surface_gaian_earth",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "aerosol_aquean",
+    "fallbackStyle": "earth-like"
+  },
+  "moon-co-orbital": {
+    "surfaceTexture": "surface_apnean_cratered",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "moon-irregular": {
+    "surfaceTexture": "surface_apnean_cratered",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "",
+    "fallbackStyle": "rocky"
+  },
+  "moon-hycean": {
+    "surfaceTexture": "surface_hycean",
+    "normalMap": "",
+    "specularMap": "",
+    "nightMap": "",
+    "cloudMap": "aerosol_aquean",
+    "fallbackStyle": "hycean"
+  }
+}

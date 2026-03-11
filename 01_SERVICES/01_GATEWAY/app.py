@@ -2259,21 +2259,53 @@ _MOON_TYPE_RULES = {
 
 
 def _classify_moon_type(k, n_total, parent_type, parent_sma, moon_mass, rng):
-    """Assign a moon type based on orbital position and parent planet."""
-    # Innermost moon of gas giant: volcanic (Io analog)
-    if k == 0 and parent_type in ('gas-giant', 'super-jupiter') and rng.random() < 0.65:
-        return 'volcanic'
+    """Assign a moon type based on orbital position and parent planet.
 
-    # Second/third moon of gas giant: ice-shell (Europa/Enceladus analog)
-    if k in (1, 2) and parent_type in ('gas-giant', 'super-jupiter') and rng.random() < 0.55:
-        return 'ice-shell'
+    Ice giants (neptune-like) get different distributions than gas giants:
+    - No inner volcanic moons (weaker tidal heating)
+    - More diverse icy compositions (Miranda / Ariel / Umbriel / Titania / Oberon)
+    - Captured retrograde for outermost (Triton analog)
+    """
+    is_ice_giant = parent_type in ('neptune-like', 'warm-neptune', 'mini-neptune')
+    is_gas_giant = parent_type in ('gas-giant', 'super-jupiter')
+
+    # ── Ice giant moons: Uranus/Neptune analogs ──
+    if is_ice_giant:
+        # Outermost large moon: possible captured KBO (Triton analog)
+        if k == n_total - 1 and n_total > 2 and moon_mass > 0.005 and rng.random() < 0.40:
+            return 'captured-irregular'
+        # Inner moons: diverse icy types (Miranda, Ariel, Umbriel progression)
+        if k == 0:
+            return rng.choice(['ice-shell', 'cratered-airless', 'ocean-moon'])
+        if k == 1:
+            return 'ice-shell' if rng.random() < 0.50 else 'ocean-moon'
+        if k == 2:
+            return 'cratered-airless' if rng.random() < 0.55 else 'ice-shell'
+        if k in (3, 4):
+            return rng.choice(['cratered-airless', 'ice-shell', 'ocean-moon'])
+        # Outer irregulars
+        if k >= n_total - 2 and rng.random() < 0.45:
+            return 'captured-irregular'
+        return rng.choice(['cratered-airless', 'ice-shell'])
+
+    # ── Gas giant moons: Jupiter/Saturn analogs ──
+    if is_gas_giant:
+        # Innermost: volcanic (Io analog) — but not guaranteed
+        if k == 0 and rng.random() < 0.65:
+            return 'volcanic'
+        # Second/third: ice-shell or ocean (Europa/Enceladus analog)
+        if k in (1, 2) and rng.random() < 0.55:
+            return rng.choice(['ice-shell', 'ocean-moon'])
+        # Third/fourth: larger icy (Ganymede/Callisto analog)
+        if k in (2, 3) and moon_mass > 0.008:
+            return rng.choice(['ice-shell', 'cratered-airless', 'ocean-moon'])
 
     # Large moon far from star: atmosphere (Titan analog)
     if moon_mass > 0.01 and parent_sma > 4.0 and rng.random() < 0.20:
         return 'atmosphere-moon'
 
     # Mid-orbit moons: ocean moon (subsurface)
-    if k in (1, 2, 3) and parent_sma > 2.0 and parent_type in ('gas-giant', 'super-jupiter', 'neptune-like'):
+    if k in (1, 2, 3) and parent_sma > 2.0 and (is_gas_giant or is_ice_giant):
         if rng.random() < 0.30:
             return 'ocean-moon'
 
@@ -2345,19 +2377,62 @@ def _infer_moons_for_planet(planet_rec, star_name, rng):
         if k < 3 and ptype in ('gas-giant', 'super-jupiter'):
             # Closer moons get more tidal heating (Io is ~0.9)
             tidal_heating = round(max(0, 0.9 - k * 0.35) * rng.uniform(0.6, 1.0), 2)
+        elif k < 2 and ptype in ('neptune-like', 'warm-neptune', 'mini-neptune'):
+            # Ice giant moons: weaker tidal heating (Miranda ~0.3)
+            tidal_heating = round(max(0, 0.4 - k * 0.20) * rng.uniform(0.4, 1.0), 2)
 
-        # Sub-type flags for moons
+        # Sub-type flags for moons — diverse geology
         moon_flags = []
+        is_ice_giant = ptype in ('neptune-like', 'warm-neptune', 'mini-neptune')
+
         if moon_type == 'volcanic':
             moon_flags.extend(['sulfur_eruptions', 'lava_lakes', 'tidal_flexing'])
+            if tidal_heating > 0.7:
+                moon_flags.append('magma_ocean')
         elif moon_type == 'ice-shell':
-            moon_flags.extend(['subsurface_ocean', 'cracked_ice', 'possible_geysers'])
+            moon_flags.append('subsurface_ocean')
+            # Diverse icy geology: Miranda vs Ariel vs Europa
+            if is_ice_giant and k == 0 and rng.random() < 0.50:
+                # Miranda analog: extreme tectonic resurfacing
+                moon_flags.extend(['chevron_terrain', 'coronae', 'extreme_geology'])
+            elif rng.random() < 0.50:
+                moon_flags.extend(['cracked_ice', 'possible_geysers'])
+            else:
+                moon_flags.extend(['resurfaced', 'canyons'])
+            if is_ice_giant and k >= 2:
+                moon_flags.append('dark_ancient_surface')
         elif moon_type == 'atmosphere-moon':
             moon_flags.extend(['thick_haze', 'hydrocarbon_lakes', 'cryogenic_surface'])
         elif moon_type == 'ocean-moon':
             moon_flags.extend(['subsurface_ocean', 'rocky_interior'])
+            if rng.random() < 0.30:
+                moon_flags.append('possible_geysers')
+        elif moon_type == 'cratered-airless':
+            # Diverse airless geology
+            if rng.random() < 0.25:
+                moon_flags.extend(['heavily_cratered', 'undifferentiated'])
+            elif rng.random() < 0.30:
+                moon_flags.extend(['dark_ancient_surface', 'undifferentiated'])
+            elif rng.random() < 0.25:
+                moon_flags.append('death_star_crater')
+            if is_ice_giant and rng.random() < 0.35:
+                moon_flags.append('dark_ancient_surface')
+            if moon_mass > 0.02 and rng.random() < 0.30:
+                moon_flags.append('magnetic_field')
         elif moon_type == 'captured-irregular':
             moon_flags.extend(['retrograde_orbit', 'high_inclination', 'irregular_shape'])
+            if is_ice_giant and moon_mass > 0.003:
+                # Triton analog: captured KBO with nitrogen geysers
+                moon_flags.extend(['captured_kbo', 'nitrogen_geysers', 'cantaloupe_terrain'])
+            elif rng.random() < 0.25:
+                moon_flags.append('spongy_pitted')  # Hyperion-like
+            if moon_mass < 0.0003:
+                moon_flags.append('elongated')  # Eros-like shape
+        elif moon_type == 'shepherd':
+            if rng.random() < 0.30:
+                moon_flags.append('elongated')
+            elif rng.random() < 0.25:
+                moon_flags.append('contact_binary')
         elif moon_type == 'binary-moon':
             moon_flags.extend(['tidally_locked_pair', 'shared_barycenter'])
 

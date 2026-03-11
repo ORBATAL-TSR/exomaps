@@ -22,14 +22,14 @@ export function GpuStatusBar({ gpu, cache }: Props) {
       {/* GPU status */}
       <div className="status-item">
         <span
-          className={`status-dot ${gpu.gpuAvailable ? 'active' : gpu.loading ? 'warning' : 'error'}`}
+          className={`status-dot ${gpu.gpuAvailable ? 'active' : gpu.loading ? 'warning' : 'info'}`}
         />
         <span>
           {gpu.loading
             ? 'Probing GPU…'
             : gpu.gpuInfo
               ? `${gpu.gpuInfo.name} (${gpu.gpuInfo.backend})`
-              : 'No GPU'}
+              : (window as any).__TAURI__ ? 'No GPU' : 'WebGL (Browser)'}
         </span>
       </div>
 

@@ -794,6 +794,84 @@ fn compute_climate(
     simulation::climate::solve_climate(&input)
 }
 
+// ── World Generation Pipeline IPC ───────────────────
+
+/// Generate a complete WorldBody through the 10-stage pipeline.
+#[tauri::command]
+fn generate_world_body(
+    input: simulation::world_gen_pipeline::WorldGenInput,
+) -> Result<simulation::world_gen_pipeline::WorldGenResult, String> {
+    Ok(simulation::world_gen_pipeline::generate_world(&input))
+}
+
+/// Classify an existing body from physical parameters (without full gen).
+#[tauri::command]
+fn classify_world_body(
+    mass_earth: f64,
+    radius_earth: f64,
+    surface_temp_k: f64,
+    surface_pressure_bar: f64,
+    iron_fraction: f64,
+    silicate_fraction: f64,
+    volatile_fraction: f64,
+    h_he_fraction: f64,
+    ocean_fraction: f64,
+    ice_fraction: f64,
+    in_habitable_zone: bool,
+    eccentricity: f64,
+    age_gyr: f64,
+    star_teff: f64,
+) -> simulation::classification::ClassificationBundle {
+    let input = simulation::classification::ClassificationInput {
+        body_class: simulation::classification::BodyClass::Planet,
+        dynamical_class: simulation::classification::DynamicalClass::Regular,
+        mass_earth,
+        radius_earth,
+        surface_temp_k,
+        surface_pressure_bar,
+        iron_fraction,
+        silicate_fraction,
+        volatile_fraction,
+        h_he_fraction,
+        ocean_fraction,
+        ice_fraction,
+        tectonic_regime: simulation::geology::TectonicRegime::StagnantLid,
+        volcanism_level: 0.3,
+        in_habitable_zone,
+        is_atmosphere_stripped: surface_pressure_bar < 0.001 && mass_earth > 0.1,
+        is_runaway_greenhouse: surface_temp_k > 600.0 && surface_pressure_bar > 50.0,
+        tidal_heating_w_m2: 0.0,
+        has_magnetic_field: mass_earth > 0.3,
+        eccentricity,
+        age_gyr,
+        star_teff,
+    };
+    simulation::classification::ClassificationBundle::classify(&input)
+}
+
+/// Get interior cross-section data for a WorldBody
+/// (lighter-weight call if body already generated).
+#[tauri::command]
+fn get_world_interior(
+    mass_earth: f64,
+    radius_earth: f64,
+    planet_type: String,
+) -> serde_json::Value {
+    let comp = simulation::composition_v2::infer_composition_v2(
+        mass_earth, radius_earth, 1.0, &planet_type,
+    );
+    let interior_input = simulation::interior::InteriorInput {
+        mass_earth,
+        radius_earth,
+        core_mass_fraction: comp.core_mass_fraction,
+        mantle_mass_fraction: comp.mantle_mass_fraction,
+        water_mass_fraction: comp.water_mass_fraction,
+        envelope_mass_fraction: comp.envelope_mass_fraction,
+    };
+    let profile = simulation::interior::solve_interior(&interior_input);
+    serde_json::to_value(&profile).unwrap_or_default()
+}
+
 // ── Savegame IPC commands (single-player mode) ──────
 
 #[tauri::command]
@@ -963,6 +1041,10 @@ fn main() {
             compute_atmosphere_v2,
             compute_interior,
             compute_climate,
+            // ── World Generation Pipeline ──
+            generate_world_body,
+            classify_world_body,
+            get_world_interior,
             // ── Savegame (single-player) ──
             sg_create_campaign,
             sg_list_campaigns,

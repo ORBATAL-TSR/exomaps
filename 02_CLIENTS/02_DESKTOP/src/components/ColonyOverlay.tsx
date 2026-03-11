@@ -298,19 +298,18 @@ function TerrainRoads({
   terrainParams: TerrainParams;
 }) {
   const { landGeo, seaGeo } = useMemo(() => {
-    // Land roads → line segments projected onto terrain
-    const lPts: number[] = [];
+    // Land roads → continuous polylines projected onto terrain (not individual segments)
+    const landGeoms: THREE.BufferGeometry[] = [];
     for (const path of landRoads) {
-      for (let i = 0; i < path.length - 1; i++) {
-        const [a0, a1, a2] = toTerrainSpherePos(path[i][0], path[i][1], heightMap, terrainParams, 0.055, 0.005);
-        const [b0, b1, b2] = toTerrainSpherePos(path[i + 1][0], path[i + 1][1], heightMap, terrainParams, 0.055, 0.005);
-        lPts.push(a0, a1, a2, b0, b1, b2);
-      }
+      if (path.length < 2) continue;
+      const pts = path.map(([lt, ln]) => {
+        const [x, y, z] = toTerrainSpherePos(lt, ln, heightMap, terrainParams, 0.055, 0.006);
+        return new THREE.Vector3(x, y, z);
+      });
+      const g = new THREE.BufferGeometry().setFromPoints(pts);
+      g.computeBoundingSphere();
+      landGeoms.push(g);
     }
-    const lg = lPts.length > 0
-      ? new THREE.BufferGeometry().setAttribute(
-          'position', new THREE.Float32BufferAttribute(lPts, 3))
-      : null;
 
     // Sea routes → polyline per route on ocean surface (flat radius)
     const sg: THREE.BufferGeometry[] = [];
@@ -325,7 +324,7 @@ function TerrainRoads({
       sg.push(g);
     }
 
-    return { landGeo: lg, seaGeo: sg };
+    return { landGeo: landGeoms, seaGeo: sg };
   }, [landRoads, seaRoutes, heightMap, terrainParams]);
 
   // Sea route dash material
@@ -342,20 +341,24 @@ function TerrainRoads({
     return m;
   }, []);
 
+  const landLineObjs = useMemo(() => {
+    return landGeo.map(g => {
+      const mat = new THREE.LineBasicMaterial({
+        color: '#cc8833',
+        transparent: true,
+        opacity: 0.80,
+        depthWrite: false,
+      });
+      return new THREE.Line(g, mat);
+    });
+  }, [landGeo]);
+
   return (
     <group>
-      {/* Land roads */}
-      {landGeo && (
-        <lineSegments geometry={landGeo}>
-          <lineBasicMaterial
-            color="#ee9944"
-            transparent
-            opacity={0.65}
-            depthWrite={false}
-            blending={THREE.AdditiveBlending}
-          />
-        </lineSegments>
-      )}
+      {/* Land roads — warm tan polylines */}
+      {landLineObjs.map((obj, i) => (
+        <primitive key={`road-${i}`} object={obj} />
+      ))}
       {/* Sea trade routes (dashed blue) */}
       {seaGeo.map((g, i) => (
         <primitive
