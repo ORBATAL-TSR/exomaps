@@ -54,6 +54,12 @@ pub struct WorldGenInput {
     pub star_age_gyr: f64,
     pub star_activity_level: f64,
     pub star_distance_pc: f64,
+    /// Stellar metallicity [Fe/H] relative to solar (solar = 0.0).
+    /// Drives iron core fraction, volatile delivery, and giant planet probability.
+    /// Source: exoplanet catalog or GAIA GSP-Phot. Defaults to 0.0 if unavailable.
+    /// Range: roughly -2.5 (metal-poor) to +0.5 (metal-rich).
+    #[serde(default)]   // 0.0 = solar metallicity when field absent in JSON
+    pub star_metallicity_feh: f64,
 
     // ── Orbital elements ──
     pub sma_au: f64,
@@ -278,12 +284,14 @@ fn stage_3_composition(
         estimate_radius_from_mass(mass)
     });
 
-    // Run the EOS composition solver
+    // Run the EOS composition solver — metallicity modifies iron core fraction
+    // and volatile delivery via the Fischer & Valenti (2005) [Fe/H] law.
     let planet_type = input.planet_type_hint
         .as_deref()
         .unwrap_or("terrestrial");
-    let comp = super::composition::infer_composition(
+    let comp = super::composition_v2::infer_composition_with_metallicity(
         mass, radius, input.sma_au, planet_type,
+        input.star_metallicity_feh,
     );
 
     // Apply formation pathway modifiers

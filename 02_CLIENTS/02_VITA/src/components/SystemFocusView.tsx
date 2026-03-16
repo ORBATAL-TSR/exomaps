@@ -55,6 +55,7 @@ import { ModelManifestPanel } from './ModelManifestPanel';
 import { ColonyOverlay } from './ColonyOverlay';
 import type { ColonyBuilding, BuildingType } from './ColonyOverlay';
 import type { Ship } from './ColonyTerrain';
+import type { BiomeInfo } from './ProceduralPlanet';
 
 /* ━━ Orbit Time Accumulator (shared across all orbiting components) ━━ */
 const _orbit = { time: 0, speed: 1.0 };
@@ -477,28 +478,25 @@ function OrreryBody({
 }) {
   const grp = useRef<THREE.Group>(null!);
   const glow = useRef<THREE.Mesh>(null!);
-  // Dynamic sun direction: planet → star (star is at origin)
-  const [sunDir, setSunDir] = useState<[number,number,number]>([-1, 0, 0]);
+  // Mutable array — mutated each frame without React re-renders.
+  // ProceduralPlanet reads sunDirRef.current which aliases this same array object.
+  const sunDirArray = useRef<[number, number, number]>([-1, 0.05, 0]);
 
   useFrame(({ clock }) => {
     const t = _orbit.time;
     const a = startAngle + (t * Math.PI * 2) / Math.max(vizPrd, 2);
     if (grp.current) {
-      const px = Math.cos(a) * orbitR;
-      const pz = Math.sin(a) * orbitR;
-      grp.current.position.x = px;
-      grp.current.position.z = pz;
-      // Sun direction: from planet position toward star at origin
-      const len = Math.sqrt(px * px + pz * pz) || 1;
-      const sdx = -px / len;
-      const sdz = -pz / len;
-      // Only update state if direction shifted significantly (avoid re-renders)
-      setSunDir(prev => {
-        if (Math.abs(prev[0] - sdx) > 0.01 || Math.abs(prev[2] - sdz) > 0.01) {
-          return [sdx, 0.05, sdz];
-        }
-        return prev;
-      });
+      grp.current.position.x = Math.cos(a) * orbitR;
+      grp.current.position.z = Math.sin(a) * orbitR;
+      // Compute actual direction from planet toward star (at origin)
+      const px = grp.current.position.x;
+      const pz = grp.current.position.z;
+      const len = Math.sqrt(px * px + pz * pz);
+      if (len > 0.001) {
+        sunDirArray.current[0] = -px / len;
+        sunDirArray.current[1] = 0.05;
+        sunDirArray.current[2] = -pz / len;
+      }
     }
     if (glow.current && active) {
       (glow.current.material as THREE.MeshBasicMaterial).opacity =
@@ -516,7 +514,7 @@ function OrreryBody({
             planetType={planetType}
             temperature={temperature ?? 288}
             seed={planetSeed ?? 0}
-            sunDirection={sunDir}
+            sunDirection={sunDirArray.current}
             rotationSpeed={0.06}
             mass={mass}
             starSpectralClass={starSpectralClass}
@@ -802,7 +800,7 @@ function OrbitingMoon({
             planetType={planetType}
             temperature={temperature}
             seed={seed}
-            sunDirection={[1, 0.3, 0.5]}
+            sunDirection={[-1, 0.5, 0.5]}
             rotationSpeed={0.02}
             colorShift={colorShift}
             mass={mass}
@@ -858,9 +856,10 @@ void main() {
 
 const STAR_FRAG = `
 uniform float uTime;
-uniform vec3 uColor;
-uniform vec3 uHotColor;
+uniform vec3  uColor;
+uniform vec3  uHotColor;
 uniform float uGranScale;
+uniform float uHot;       // 0=cool M-star, 1=hot A/O-star
 varying vec3 vNormal;
 varying vec3 vPosition;
 varying vec2 vUv;
@@ -911,124 +910,333 @@ float vnoise(vec3 p) {
 }
 
 void main() {
-  vec3 N = normalize(vNormal);
-  vec3 V = normalize(cameraPosition - vPosition);
-  float NdotV = max(dot(N, V), 0.0);
-  vec3 sp = normalize(vPosition);
+  vec3  N   = normalize(vNormal);
+  vec3  V   = normalize(cameraPosition - vPosition);
+  float mu  = max(dot(N, V), 0.0);
+  vec3  sp  = normalize(vPosition);
 
-  // Differential rotation: equator rotates faster than poles
-  float lat = asin(clamp(sp.y, -1.0, 1.0));
-  float rotRate = uTime * 0.02 * (1.0 - 0.4 * lat * lat);
+  // Differential rotation
+  float lat     = asin(clamp(sp.y, -1.0, 1.0));
+  float rotRate = uTime * 0.025 * (1.0 - 0.45 * lat * lat);
   float cs = cos(rotRate), sn = sin(rotRate);
-  sp = vec3(sp.x * cs - sp.z * sn, sp.y, sp.x * sn + sp.z * cs);
+  sp = vec3(sp.x*cs - sp.z*sn, sp.y, sp.x*sn + sp.z*cs);
 
-  // ===== ANIMATED VORONOI CONVECTION CELLS =====
+  // ── FBM domain-warp for organic, non-geometric cell shapes ───────────────
+  // Cool stars: strong irregular warping; hot stars: subtle
+  float wStr = mix(0.22, 0.05, uHot);
+  vec3  warp = vec3(
+    vnoise(sp * 5.5 + uTime * 0.045) - 0.5,
+    vnoise(sp * 5.5 + vec3(1.8, 0.5, 0.0) + uTime * 0.038) - 0.5,
+    vnoise(sp * 5.5 + vec3(0.0, 2.7, 0.8) + uTime * 0.041) - 0.5
+  ) * wStr;
+  vec3 spw = normalize(sp + warp);
 
-  // Large supergranulation — slow-evolving mega-cells
-  vec3 v1 = voronoiCell(sp * 3.5, 0.05);
-  float superLane = 1.0 - smoothstep(0.02, 0.12, v1.y);
+  // ── Convection cells ──────────────────────────────────────────────────────
+  // Animation speed: cool stars boil fast; hot stars barely evolve
+  float cspd = mix(0.28, 0.05, uHot);
+
+  // Main granulation on domain-warped surface
+  // KEY: use v2.x (distance to center) not v2.y (edge proximity)
+  // → smooth glow at cell center, not hard black-crack lanes
+  vec3  v2       = voronoiCell(spw * uGranScale, cspd);
+  float cellGlow = 1.0 - smoothstep(0.0, 0.40, v2.x);  // 1=center bright, 0=far
+  float cellVar  = 0.82 + 0.18 * v2.z;
+
+  // Supergranulation — large-scale brightness modulation
+  vec3  v1       = voronoiCell(spw * 3.0, cspd * 0.30);
+  float superG   = 1.0 - smoothstep(0.0, 0.46, v1.x);
   float superVar = 0.88 + 0.12 * v1.z;
 
-  // Main granulation — the visible bubbling convection pattern
-  vec3 v2 = voronoiCell(sp * uGranScale, 0.10);
-  float granLane = 1.0 - smoothstep(0.015, 0.08, v2.y);
-  float granCenter = smoothstep(0.45, 0.05, v2.x);
-  float granVar = 0.85 + 0.15 * v2.z;
+  // Mesogranulation — fine fast shimmering
+  vec3  v3   = voronoiCell(spw * uGranScale * 2.5, cspd * 1.7);
+  float mesoG = 1.0 - smoothstep(0.0, 0.35, v3.x);
 
-  // Fine mesogranulation — fast tiny bubbles
-  vec3 v3 = voronoiCell(sp * uGranScale * 2.8, 0.18);
-  float fineLane = 1.0 - smoothstep(0.01, 0.05, v3.y);
+  // Weighted multi-scale brightness (all smooth, no hard edges)
+  float convB = (cellGlow*0.58 + superG*0.24 + mesoG*0.18) * cellVar * superVar;
 
-  // Combine: dark intergranule lanes + bright cell centers
-  float lanes = 1.0 - granLane * 0.35 - superLane * 0.12 - fineLane * 0.08;
-  float cellGlow = granCenter * 0.22 * granVar;
-  float cellBright = clamp(lanes * superVar + cellGlow, 0.0, 1.0);
+  // Plasma turbulence overlay
+  float turb  = vnoise(sp * 28.0 + uTime * 0.11) * 0.07
+              + vnoise(sp * 15.0 + uTime * 0.07) * 0.05;
+  convB = clamp(convB + turb, 0.0, 1.0);
 
-  // Fine plasma turbulence overlay
-  float turb = vnoise(sp * 28.0 + uTime * 0.06) * 0.05;
-  cellBright += turb;
+  // ── Temperature-scaled brightness floor ──────────────────────────────────
+  // Hot stars: high floor (cells barely visible, subtle shimmer)
+  // Cool stars: low floor (deeper contrast, visible granulation)
+  float floorB = mix(0.38, 0.76, uHot);
+  convB        = floorB + convB * (1.0 - floorB);
 
-  // ===== LIMB DARKENING =====
-  float limbBase = 0.35 + 0.65 * pow(NdotV, 0.40);
-  vec3 limbTint = vec3(pow(NdotV, 0.28), pow(NdotV, 0.36), pow(NdotV, 0.52));
+  // ── Cool-star extras (faculae, spicules, seismic rings) ───────────────────
+  float coolF   = 1.0 - uHot;
+  float faculae = max(0.0, vnoise(sp * 20.0 + uTime * 0.04) - 0.63) * 4.5
+                * smoothstep(0.28, 0.0, mu) * 0.16 * coolF;
+  float spicule = max(0.0, vnoise(sp * 45.0 + uTime * 0.22) - 0.70) * 4.2
+                * (1.0 - smoothstep(0.0, 0.38, v2.x)) * 0.20 * coolF;
+  float sTheta  = acos(clamp(mu, 0.0, 1.0));
+  float sPhase  = uTime * 0.34;
+  float seismic = (exp(-pow(fract(sTheta*4.5 - sPhase    )*2.0-1.0,2.0)*20.0)*0.07
+                +  exp(-pow(fract(sTheta*6.0 - sPhase*1.3)*2.0-1.0,2.0)*16.0)*0.04)
+                * coolF * 0.85;
 
-  // ===== SUNSPOTS (Voronoi-based, sparse) =====
-  vec3 vSpot = voronoiCell(sp * 5.0 + vec3(uTime * 0.002, 0.0, 0.0), 0.025);
-  float isSpot = step(0.88, vSpot.z);
-  float spotDark = 1.0 - isSpot * smoothstep(0.28, 0.0, vSpot.x) * 0.70;
-  float latFade = smoothstep(0.55, 0.28, abs(sp.y));
-  spotDark = mix(1.0, spotDark, latFade * smoothstep(0.0, 0.25, NdotV));
+  convB = clamp(convB + spicule + faculae, 0.0, 1.0);
 
-  // ===== COLOR COMPOSITION =====
-  vec3 surfCol = mix(uColor * 0.82, uHotColor, cellBright * 0.55);
-  surfCol *= spotDark;
-  surfCol *= limbBase * limbTint;
+  // ── Limb darkening ────────────────────────────────────────────────────────
+  float limb = max(1.0 - 0.38*(1.0-mu) - 0.14*(1.0-mu*mu), 0.28);
+  float ef   = pow(1.0-mu, 1.6) * (1.0 - uHot*0.60);
+  vec3  limbColor = vec3(1.0+ef*0.12, 1.0-ef*0.06, 1.0-ef*0.24);
 
-  // Subtle pulsation
-  surfCol *= 1.0 + 0.015 * sin(uTime * 1.8) + 0.008 * sin(uTime * 3.3);
+  // ── Sunspots ──────────────────────────────────────────────────────────────
+  vec3  vSp   = voronoiCell(sp*5.2 + vec3(uTime*0.002,0.0,0.0), 0.02);
+  float spotD = 1.0 - step(0.87,vSp.z)*smoothstep(0.25,0.0,vSp.x)*0.55*coolF;
+  spotD = mix(1.0, spotD, smoothstep(0.58,0.24,abs(sp.y))*smoothstep(0.0,0.18,mu));
 
-  // HDR for bloom
-  float hdrBoost = 1.3 + 1.0 * pow(NdotV, 0.6);
-  surfCol *= hdrBoost;
+  // ── Physical emissive surface colors ──────────────────────────────────────
+  // Actual photospheric emission by temperature — NOT spectral class color.
+  // Floor = coolest intergranule gas (deep red/orange but still GLOWING)
+  // Peak  = hottest rising cell center (yellow-white, saturated)
+  //   M ~3000K: deep crimson    K ~4500K: saturated orange
+  //   G ~5800K: orange-yellow   F ~7000K: pale yellow    A ~10000K: blue-white
+  vec3 mFloor = vec3(0.92, 0.16, 0.02);  vec3 mPeak = vec3(1.00, 0.44, 0.08);
+  vec3 kFloor = vec3(0.98, 0.42, 0.06);  vec3 kPeak = vec3(1.00, 0.68, 0.22);
+  vec3 gFloor = vec3(1.00, 0.62, 0.18);  vec3 gPeak = vec3(1.00, 0.86, 0.48);
+  vec3 fFloor = vec3(1.00, 0.86, 0.55);  vec3 fPeak = vec3(1.00, 0.97, 0.82);
+  vec3 aFloor = vec3(0.84, 0.90, 1.00);  vec3 aPeak = vec3(0.95, 0.98, 1.00);
 
-  gl_FragColor = vec4(surfCol, 1.0);
+  float t1 = smoothstep(0.00, 0.22, uHot);
+  float t2 = smoothstep(0.22, 0.44, uHot);
+  float t3 = smoothstep(0.44, 0.68, uHot);
+  float t4 = smoothstep(0.68, 1.00, uHot);
+  vec3 floorCol = mix(mix(mix(mix(mFloor, kFloor, t1), gFloor, t2), fFloor, t3), aFloor, t4);
+  vec3 peakCol  = mix(mix(mix(mix(mPeak,  kPeak,  t1), gPeak,  t2), fPeak,  t3), aPeak,  t4);
+
+  vec3 surfCol  = mix(floorCol, peakCol, convB);
+  surfCol      += peakCol * seismic * 0.35;
+  surfCol      += peakCol * (spicule*0.50 + faculae*0.55);
+  surfCol      *= spotD * limb * limbColor;
+
+  // Chromospheric rim glow — bright emission ring at disk edge, fades toward center
+  // Simulates the chromosphere / lower corona visible at the solar limb
+  float mu3     = pow(max(0.0, 1.0 - mu), 3.5);
+  float chromoI = mu3 * mix(0.60, 0.22, uHot);
+  vec3  chromoC = mix(peakCol * 1.30, vec3(0.90, 0.95, 1.00), uHot * 0.55);
+  surfCol      += chromoC * chromoI;
+
+  surfCol      *= 1.0 + 0.010*sin(uTime*1.8) + 0.005*sin(uTime*3.2);
+
+  // Gamma lift: raises midtones strongly so star looks blazing not painted
+  surfCol = pow(max(surfCol, vec3(0.0)), vec3(0.60));
+
+  gl_FragColor = vec4(clamp(surfCol, 0.0, 1.0), 1.0);
 }`;
 
-/* ---- Corona shell shader (volumetric radial glow with streamer rays) ---- */
+/* ---- Corona billboard shader — 2D filaments, prominences, streamer rays ---- */
+const CORONA_BILLBOARD_VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
 const CORONA_FRAG = `
 uniform float uTime;
-uniform vec3 uColor;
-uniform vec3 uCamPos;
-varying vec3 vNormal;
-varying vec3 vPosition;
-varying vec2 vUv;
+uniform vec3  uColor;
+varying vec2  vUv;
 
-float chash(float n) { return fract(sin(n) * 43758.5453); }
+float h1(float n) { return fract(sin(n) * 43758.5453); }
+float h2(vec2  p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+
+// Smooth 1-D value noise on angle
+float vnoise1(float x) {
+  float i = floor(x); float f = fract(x);
+  float u = f*f*(3.0-2.0*f);
+  return mix(h1(i), h1(i+1.0), u);
+}
+
+// FBM over angle — drives filament boundary and flare shapes
+float fbmA(float a, float t, float spd) {
+  float v=0.0; float amp=0.5; float x=a;
+  for(int k=0;k<5;k++){
+    v += amp * vnoise1(x + t*spd);
+    amp *= 0.55; x *= 2.1; spd *= 1.2;
+  }
+  return v;
+}
+
+// billboard: plane = star * 8, so star radius in UV-half space = 1/8 * 0.5 = 0.0625...
+// plane size = size*8 → half = size*4 → starR = size/(size*4) * 0.5 = 0.125
+const float starR = 0.125;
 
 void main() {
-  vec3 N = normalize(vNormal);
-  vec3 V = normalize(uCamPos - vPosition);
-  float NdotV = abs(dot(N, V));
-  float edge = 1.0 - NdotV;
+  vec2  c     = vUv - 0.5;
+  float r     = length(c);
+  float angle = atan(c.y, c.x);
 
-  // Multi-power edge glow (inner bright + extended faint)
-  float glowInner = pow(edge, 2.0) * 0.6;
-  float glowOuter = pow(edge, 5.0) * 1.2;
-  float glow = glowInner + glowOuter;
+  // Hard mask — inside the star core: invisible (star sphere covers it)
+  if (r < starR * 0.90) discard;
 
-  // Streamer rays: multi-freq angular noise with smooth blending
-  float angle = atan(N.y, N.x);
-  float rayNoise = 0.0;
-  float totalA = 0.0;
-  for(float i=1.0; i<7.0; i+=1.0){
-    float freq = i*2.0 + chash(i*3.7)*2.0; // non-uniform frequencies
-    float speed = 0.06 + i*0.03;
-    float amp = 1.0/i;
-    rayNoise += sin(angle*freq + uTime*speed + chash(i)*6.28) * amp;
-    totalA += amp;
+  float t = uTime;
+
+  // ── Filament / Prominence boundary ──────────────────────────────────────────
+  // FBM noise on angle creates irregular, tongue-like protrusions at star edge
+  float filNoise  = fbmA(angle * 2.5, t, 0.25);
+  float filRadius = starR * (1.08 + filNoise * 0.40);  // lumpy star edge
+  // How deep inside a filament tongue: 1 at the base, 0 at the tip
+  float filDepth  = clamp((filRadius - r) / (filRadius - starR * 1.0), 0.0, 1.0);
+  filDepth        = smoothstep(0.0, 1.0, filDepth);
+  float filGlow   = filDepth * exp(-max(r - starR, 0.0) / (starR * 0.45));
+
+  // ── Shooting flares — higher-freq angular modulation, faster drift ───────────
+  float flareN    = fbmA(angle * 5.5 + 1.3, t, 0.55);
+  float flare     = pow(max(flareN - 0.38, 0.0) * 1.7, 2.2);
+  flare          *= exp(-max(r - starR, 0.0) / (starR * 0.7));
+  flare          *= smoothstep(starR * 0.92, starR * 1.25, r);
+
+  // ── Outer streamer rays ───────────────────────────────────────────────────────
+  float rays = 0.0; float wSum = 0.0;
+  for(float i=1.0; i<=8.0; i+=1.0){
+    float freq  = i * 1.7 + h1(i*4.1) * 2.5;
+    float spd   = 0.007 + i * 0.004;
+    float amp   = 1.0 / i;
+    rays += sin(angle*freq + t*spd + h1(i)*6.2832) * amp;
+    wSum += amp;
   }
-  rayNoise = rayNoise/totalA * 0.5 + 0.5;
+  rays = (rays/wSum) * 0.5 + 0.5;         // 0..1
+  float streamBright = rays * rays;         // punchy bright / dark gap
 
-  // Pulsing streamers
-  float streamPulse = 0.85 + 0.15*sin(uTime*0.5 + angle*1.5);
+  // Radial distance beyond star (0 at surface, 1 at billboard edge)
+  float d = max(r - starR, 0.0) / (0.5 - starR);
 
-  float corona = glow * (0.5 + 0.6 * rayNoise) * streamPulse;
+  // Base corona radial falloff
+  float base = (exp(-d*d*5.5)*1.0 + exp(-d*4.0)*0.45) * (0.28 + 0.72*streamBright);
 
-  // Color: hot white inside, star color outside — spectral-type-aware corona
-  // Cool stars keep warmer corona; hot stars get blue-white tips
-  vec3 col = mix(vec3(1.0,0.98,0.95), uColor, edge*0.65);
-  float hotFrac = dot(uColor, vec3(0.15, 0.30, 0.55)); // how blue the star is
-  vec3 tipColor = mix(uColor * 1.2, vec3(0.85,0.90,1.0), hotFrac);
-  col = mix(col, tipColor, pow(edge,4.0)*0.3);
+  // ── Chromosphere ring ────────────────────────────────────────────────────────
+  float chromD  = (r - starR) / starR;
+  float chrom   = exp(-chromD*chromD*85.0) * 2.8;
 
-  float flicker = 1.0 + 0.04*sin(uTime*3.5 + angle*2.0);
-  gl_FragColor = vec4(col * corona * flicker * 1.0, corona * 0.30);
+  // ── Mask ─────────────────────────────────────────────────────────────────────
+  float mask = smoothstep(starR * 0.88, starR * 1.08, r);
+
+  float pulse  = 0.85 + 0.15 * sin(t*0.38 + angle*1.4);
+  float flicker= 1.0  + 0.04 * sin(t*3.2  + angle*2.1);
+
+  // ── Colors ───────────────────────────────────────────────────────────────────
+  float hotFrac = dot(uColor, vec3(0.15,0.30,0.55));
+
+  // Filament/prominence: deep orange → bright yellow (like Hα prominences)
+  vec3 filCol   = mix(vec3(1.0,0.40,0.06), vec3(1.0,0.78,0.22), filNoise);
+  vec3 flareCol = mix(vec3(1.0,0.55,0.10), vec3(1.0,0.88,0.35), flareN);
+
+  // Outer corona: warm white core → star-tinted tips
+  vec3 innerCol  = mix(vec3(1.0,0.94,0.82), vec3(0.92,0.96,1.0), hotFrac);
+  vec3 outerCol  = mix(uColor * 1.15, vec3(0.55,0.68,1.0), hotFrac * 0.5);
+  vec3 coronaCol = mix(innerCol, outerCol, smoothstep(0.0, 0.50, d));
+
+  // Chromosphere: pinkish-orange for cool, blue-white for hot
+  vec3 chromCol  = mix(vec3(1.0,0.62,0.28), vec3(0.9,0.95,1.0), hotFrac);
+
+  // ── Compose ──────────────────────────────────────────────────────────────────
+  float baseA  = base  * mask * pulse;
+  float filA   = (filGlow * 0.85 + flare * 1.10) * mask;
+  float chromA = chrom * mask;
+
+  vec3 finalCol = coronaCol * baseA * flicker
+                + filCol    * filGlow * mask
+                + flareCol  * flare   * mask
+                + chromCol  * chromA;
+  float finalA  = baseA*0.65 + filA*0.80 + chromA*0.60;
+
+  if (finalA < 0.004) discard;
+  gl_FragColor  = vec4(finalCol, finalA);
 }`;
 
-function OrreryStar({ color, size, teff }: { color: string; size: number; teff?: number }) {
+// ── Procedural solar granulation texture ─────────────────────────────────────
+// Generates a DataTexture approximating photospheric convection cells via FBM.
+// Two instances with different seeds are used as rotating layers.
+/* ---- Seamless procedural granulation layers (use vObjNormal, no UV seam) ---- */
+const LAYER_VERT = `
+varying vec3 vObjNormal;
+varying float vMu;  // NdotV in view space — used to fade silhouette polygon edges
+void main() {
+  vObjNormal = normal;
+  // normalMatrix * normal gives view-space normal; dot with (0,0,1) = view dir
+  vMu = max(0.0, normalize(normalMatrix * normal).z);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const LAYER_FRAG = `
+uniform float uSeed;  // per-layer offset so the two layers have different patterns
+uniform float uHot;   // 0=cool M, 1=hot A
+varying vec3 vObjNormal;
+varying float vMu;
+
+float h31(vec3 p) {
+  p = fract(p * vec3(127.1, 311.7, 74.7) + uSeed);
+  p += dot(p, p.yzx + 19.19);
+  return fract((p.x + p.y) * p.z);
+}
+float vn(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(h31(i),             h31(i+vec3(1,0,0)), f.x),
+        mix(h31(i+vec3(0,1,0)), h31(i+vec3(1,1,0)), f.x), f.y),
+    mix(mix(h31(i+vec3(0,0,1)), h31(i+vec3(1,0,1)), f.x),
+        mix(h31(i+vec3(0,1,1)), h31(i+vec3(1,1,1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p) {
+  float v = 0.0, a = 0.50;
+  for (int i = 0; i < 5; i++) { v += a * vn(p); a *= 0.50; p *= 2.07; }
+  return v;
+}
+
+void main() {
+  // Silhouette fade: smoothly kill contribution near polygon edges
+  float edge = smoothstep(0.0, 0.22, vMu);
+  if (edge < 0.01) discard;
+
+  vec3 n = normalize(vObjNormal);
+  float raw = fbm(n * 5.0);
+  float t   = clamp((raw - 0.30) / 0.42, 0.0, 1.0);
+  float w   = t * t * 0.34 * edge;
+  if (w < 0.01) discard;
+
+  // Temperature-scaled additive tint — cool=orange, hot=pale yellow
+  vec3 warm = mix(vec3(0.95, 0.42, 0.06), vec3(1.00, 0.90, 0.60), uHot);
+  gl_FragColor = vec4(warm * w, w);
+}`;
+
+/* ---- Inner rim glow billboard — bright at disk edge, transparent toward center ---- */
+const RIM_GLOW_FRAG = `
+uniform vec3  uColor;
+uniform float uHot;
+varying vec2 vUv;
+
+void main() {
+  vec2  c     = vUv - 0.5;
+  float r     = length(c) * 2.0;   // 0=center, 1=plane edge
+
+  // Billboard is size*2.6 wide; star disk edge sits at r = size/(size*2.6)*2 = 0.769
+  float starR = 0.769;
+
+  // Inward gradient: 0 at center, peaks at disk edge, decays into corona
+  float nr   = clamp(r / starR, 0.0, 1.0);
+  float rise = pow(nr, 1.4);                                    // rises 0→1 toward edge
+  float fall = exp(-pow(max(0.0, r - starR * 0.96) / 0.10, 2.0)); // Gaussian falloff outside
+  float glow = rise * fall;
+
+  if (glow < 0.008) discard;
+
+  // Color: star-tinted warm glow, slightly brighter and more saturated at the very rim
+  vec3 rimCol = mix(uColor * vec3(1.4, 1.1, 0.85), vec3(1.0, 0.94, 0.78), 0.30 + uHot * 0.40);
+  float alpha = glow * 0.72;
+  gl_FragColor = vec4(rimCol * alpha, alpha);
+}`;
+
+function OrreryStar({ color, size, teff, occludable = false }: { color: string; size: number; teff?: number; occludable?: boolean }) {
   const matRef = useRef<THREE.ShaderMaterial>(null!);
   const coronaRef = useRef<THREE.ShaderMaterial>(null!);
   const glowRef = useRef<THREE.Group>(null!);
+  const layer1Ref = useRef<THREE.Mesh>(null!);
+  const layer2Ref = useRef<THREE.Mesh>(null!);
 
   const starCol = useMemo(() => new THREE.Color(color), [color]);
   const hotCol = useMemo(() => {
@@ -1048,28 +1256,53 @@ function OrreryStar({ color, size, teff }: { color: string; size: number; teff?:
     return 7.0;                  // M: huge convection cells
   }, [teff]);
 
+  const hotFrac = useMemo(() => {
+    const t = teff ?? 5778;
+    return Math.min(1.0, Math.max(0.0, (t - 3000) / 9000));
+  }, [teff]);
+
+  const layer1Uniforms = useMemo(() => ({
+    uSeed: { value: 0.317 + hotFrac * 0.1 },
+    uHot:  { value: hotFrac },
+  }), [hotFrac]);
+  const layer2Uniforms = useMemo(() => ({
+    uSeed: { value: 0.831 + hotFrac * 0.1 },
+    uHot:  { value: hotFrac },
+  }), [hotFrac]);
+
   const starUniforms = useMemo(() => ({
-    uTime: { value: 0 },
-    uColor: { value: starCol },
-    uHotColor: { value: hotCol },
+    uTime:      { value: 0 },
+    uColor:     { value: starCol },
+    uHotColor:  { value: hotCol },
     uGranScale: { value: granScale },
-  }), [starCol, hotCol, granScale]);
+    uHot:       { value: hotFrac },
+  }), [starCol, hotCol, granScale, hotFrac]);
 
   const coronaUniforms = useMemo(() => ({
-    uTime: { value: 0 },
+    uTime:  { value: 0 },
     uColor: { value: starCol },
-    uCamPos: { value: new THREE.Vector3() },
   }), [starCol]);
+
+  const rimGlowUniforms = useMemo(() => ({
+    uColor: { value: starCol },
+    uHot:   { value: hotFrac },
+  }), [starCol, hotFrac]);
 
   useFrame(({ clock, camera }) => {
     const t = clock.getElapsedTime();
     if (matRef.current) matRef.current.uniforms.uTime.value = t;
-    if (coronaRef.current) {
-      coronaRef.current.uniforms.uTime.value = t;
-      coronaRef.current.uniforms.uCamPos.value.copy(camera.position);
-    }
+    if (coronaRef.current) coronaRef.current.uniforms.uTime.value = t;
     // Single glow billboard faces camera
     if (glowRef.current) glowRef.current.quaternion.copy(camera.quaternion);
+    // Texture layers rotate independently for animated granulation
+    if (layer1Ref.current) {
+      layer1Ref.current.rotation.y = t * 0.04;
+      layer1Ref.current.rotation.z = t * 0.008;
+    }
+    if (layer2Ref.current) {
+      layer2Ref.current.rotation.y = -t * 0.025;
+      layer2Ref.current.rotation.x = t * 0.006;
+    }
   });
 
   return (
@@ -1083,44 +1316,113 @@ function OrreryStar({ color, size, teff }: { color: string; size: number; teff?:
           uniforms={starUniforms} />
       </mesh>
 
-      {/* Corona shell — thin edge glow with streamers */}
-      <mesh>
-        <sphereGeometry args={[size * 1.20, 64, 64]} />
-        <shaderMaterial ref={coronaRef}
-          vertexShader={STAR_VERT}
-          fragmentShader={CORONA_FRAG}
-          uniforms={coronaUniforms}
-          transparent side={THREE.BackSide}
-          depthWrite={false} blending={THREE.AdditiveBlending} />
+      {/* Animated granulation layers — seamless 3D-noise shaders, no UV seam */}
+      <mesh ref={layer1Ref}>
+        <sphereGeometry args={[size * 1.002, 64, 64]} />
+        <shaderMaterial
+          vertexShader={LAYER_VERT}
+          fragmentShader={LAYER_FRAG}
+          uniforms={layer1Uniforms}
+          transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+      </mesh>
+      <mesh ref={layer2Ref}>
+        <sphereGeometry args={[size * 1.004, 64, 64]} />
+        <shaderMaterial
+          vertexShader={LAYER_VERT}
+          fragmentShader={LAYER_FRAG}
+          uniforms={layer2Uniforms}
+          transparent depthWrite={false} blending={THREE.AdditiveBlending} />
       </mesh>
 
-      {/* Single soft glow billboard — bloom does the rest */}
+      {/* Glow billboards — face camera */}
       <group ref={glowRef}>
+        {/* Rim glow: inward gradient — bright at disk edge, transparent toward center.
+            depthTest=false so it renders over the opaque star sphere surface. */}
         <mesh>
-          <planeGeometry args={[size * 3.5, size * 3.5]} />
+          <planeGeometry args={[size * 2.6, size * 2.6]} />
+          <shaderMaterial
+            vertexShader={CORONA_BILLBOARD_VERT}
+            fragmentShader={RIM_GLOW_FRAG}
+            uniforms={rimGlowUniforms}
+            transparent depthTest={!occludable} depthWrite={false} blending={THREE.AdditiveBlending} />
+        </mesh>
+        {/* Corona billboard — filaments, prominences, streamer rays */}
+        <mesh renderOrder={-1}>
+          <planeGeometry args={[size * 8.0, size * 8.0]} />
+          <shaderMaterial ref={coronaRef}
+            vertexShader={CORONA_BILLBOARD_VERT}
+            fragmentShader={CORONA_FRAG}
+            uniforms={coronaUniforms}
+            transparent
+            depthWrite={false} blending={THREE.AdditiveBlending} />
+        </mesh>
+        {/* Outer glow: large soft halo with chromatic aberration + diffraction spikes */}
+        <mesh>
+          <planeGeometry args={[size * 4.5, size * 4.5]} />
           <shaderMaterial
             transparent
             depthWrite={false}
             blending={THREE.AdditiveBlending}
             uniforms={{ uColor: { value: starCol } }}
-            vertexShader={`
-              varying vec2 vUv;
-              void main() {
-                vUv = uv;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-              }
-            `}
+            vertexShader={`varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`}
             fragmentShader={`
               uniform vec3 uColor;
               varying vec2 vUv;
               void main() {
                 vec2 c = vUv - 0.5;
                 float r = length(c) * 2.0;
-                // Smooth analytic falloff — no hard edges, no visible boundary
-                float glow = exp(-r * r * 3.0) * 0.35;
-                glow += exp(-r * 4.0) * 0.15; // extended faint halo
-                vec3 col = mix(vec3(1.0, 0.99, 0.96), uColor, r * 0.6);
-                gl_FragColor = vec4(col * glow, glow);
+
+                // Chromatic aberration — R shifts out, B shifts in
+                float rr = length(c * 1.022) * 2.0;
+                float rb = length(c * 0.978) * 2.0;
+                float glowR = exp(-rr*rr*2.8)*0.36 + exp(-rr*3.6)*0.14;
+                float glowG = exp(-r *r *2.8)*0.36 + exp(-r *3.6)*0.14;
+                float glowB = exp(-rb*rb*2.8)*0.36 + exp(-rb*3.6)*0.14;
+                float glow  = (glowR + glowG + glowB) / 3.0;
+
+                // Diffraction spikes (4-point cross)
+                float fade = smoothstep(0.06, 0.30, r);
+                float spH = exp(-c.y*c.y*160.0) * exp(-abs(c.x)*4.5);
+                float spV = exp(-c.x*c.x*160.0) * exp(-abs(c.y)*4.5);
+                float spikes = (spH + spV) * fade * 0.28;
+
+                vec3 col = mix(vec3(1.0,0.99,0.96), uColor, r * 0.6);
+                vec3 chromCol = col * vec3(glowR/max(glowG,0.001), 1.0, glowB/max(glowG,0.001));
+                vec3 spikeCol = mix(col, vec3(0.80,0.88,1.0), 0.45);
+                float total = glow + spikes * 0.55;
+                if (total < 0.003) discard;
+                gl_FragColor = vec4(chromCol * glow + spikeCol * spikes, total);
+              }
+            `}
+          />
+        </mesh>
+        {/* Star surface brightener — flat warm fill across the whole disk, additive */}
+        {/* plane = size*3 → star edge at r≈0.67 in r=length(c)*2 space */}
+        <mesh>
+          <planeGeometry args={[size * 3.0, size * 3.0]} />
+          <shaderMaterial
+            transparent
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            uniforms={{ uColor: { value: hotCol } }}
+            vertexShader={`varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`}
+            fragmentShader={`
+              uniform vec3 uColor;
+              varying vec2 vUv;
+              void main() {
+                vec2 c = vUv - 0.5;
+                float r = length(c) * 2.0;
+                // Star disk occupies r < 0.667 (plane=3x star diameter)
+                // Flat-top fill: strong across whole disk, fades at corona region
+                float diskFill = exp(-r * r * 1.8) * 0.55       // wide soft fill
+                               + exp(-r * 3.2)     * 0.25;      // extended warm haze
+                // Extra hot center punch
+                float center   = exp(-r * r * 9.0) * 0.30;
+                float total    = diskFill + center;
+                if (total < 0.004) discard;
+                // Color: near-white hot center → star color outward
+                vec3 col = mix(vec3(1.0, 0.97, 0.88), uColor * 1.1, smoothstep(0.0, 0.7, r));
+                gl_FragColor = vec4(col * total, total);
               }
             `}
           />
@@ -1131,136 +1433,6 @@ function OrreryStar({ color, size, teff }: { color: string; size: number; teff?:
 }
 
 /** Distant parent star visible from planet/moon depth — bright disc with animated convection */
-function DistantStar({ color, direction, luminosity = 1 }: { color: string; direction: [number, number, number]; luminosity?: number }) {
-  const ref = useRef<THREE.Group>(null!);
-  const discRef = useRef<THREE.ShaderMaterial>(null!);
-
-  const lumScale = Math.max(0.5, Math.min(3.0, Math.pow(luminosity, 0.30)));
-  const coreSize = 1.8 * lumScale;
-  const glowSize = 4.0 * lumScale;
-
-  const dir = useMemo(() => {
-    const v = new THREE.Vector3(...direction).normalize();
-    return v.multiplyScalar(45);
-  }, [direction]);
-
-  const starCol = useMemo(() => new THREE.Color(color), [color]);
-
-  const discUniforms = useMemo(() => ({
-    uTime: { value: 0 },
-    uColor: { value: starCol },
-  }), [starCol]);
-
-  useFrame(({ camera, clock }) => {
-    if (!ref.current) return;
-    ref.current.quaternion.copy(camera.quaternion);
-    if (discRef.current) discRef.current.uniforms.uTime.value = clock.getElapsedTime();
-  });
-
-  return (
-    <group position={[dir.x, dir.y, dir.z]}>
-      <group ref={ref}>
-        {/* Solar disc with animated 2D Voronoi convection */}
-        <mesh>
-          <planeGeometry args={[coreSize * 1.4, coreSize * 1.4]} />
-          <shaderMaterial ref={discRef}
-            transparent
-            depthWrite={false}
-            blending={THREE.AdditiveBlending}
-            uniforms={discUniforms}
-            vertexShader={`
-              varying vec2 vUv;
-              void main() {
-                vUv = uv;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-              }
-            `}
-            fragmentShader={`
-              uniform float uTime;
-              uniform vec3 uColor;
-              varying vec2 vUv;
-
-              vec2 hash22(vec2 p) {
-                p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
-                return fract(sin(p) * 43758.5453);
-              }
-              float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-
-              // 2D animated Voronoi → (dist, edge, cellId)
-              vec3 voronoi2(vec2 p, float speed) {
-                vec2 i = floor(p);
-                vec2 f = fract(p);
-                float d1 = 100.0, d2 = 100.0;
-                float id = 0.0;
-                for (int x = -1; x <= 1; x++)
-                for (int y = -1; y <= 1; y++) {
-                  vec2 nb = vec2(float(x), float(y));
-                  vec2 cell = i + nb;
-                  vec2 pt = hash22(cell);
-                  pt = 0.5 + 0.4 * sin(uTime * speed + 6.2831 * pt);
-                  vec2 diff = nb + pt - f;
-                  float d = dot(diff, diff);
-                  if (d < d1) { d2 = d1; d1 = d; id = hash21(cell); }
-                  else if (d < d2) { d2 = d; }
-                }
-                return vec3(sqrt(d1), sqrt(d2) - sqrt(d1), id);
-              }
-
-              void main() {
-                vec2 c = vUv - 0.5;
-                float r = length(c) * 2.0;
-                if (r > 1.0) discard;
-                float mu = sqrt(1.0 - r * r);
-
-                // Convection cells on the disc
-                vec3 v = voronoi2(c * 8.0, 0.12);
-                float lane = 1.0 - smoothstep(0.01, 0.06, v.y);
-                float cellBright = 1.0 - lane * 0.30;
-
-                float limb = 0.30 + 0.70 * mu;
-                float starHeat = dot(uColor, vec3(0.15, 0.30, 0.55));
-                float whitePush = mix(0.35, 0.70, starHeat);
-                vec3 bright = mix(uColor * 1.15, vec3(1.0, 0.99, 0.96), whitePush);
-                vec3 col = mix(uColor * 0.75, bright, mu * cellBright) * limb;
-                float edge = 1.0 - smoothstep(0.88, 1.0, r);
-                gl_FragColor = vec4(col * 1.8, edge);
-              }
-            `}
-          />
-        </mesh>
-        {/* Single soft glow — bloom handles the rest */}
-        <mesh>
-          <planeGeometry args={[glowSize, glowSize]} />
-          <shaderMaterial
-            transparent
-            depthWrite={false}
-            blending={THREE.AdditiveBlending}
-            uniforms={{ uColor: { value: starCol } }}
-            vertexShader={`
-              varying vec2 vUv;
-              void main() {
-                vUv = uv;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-              }
-            `}
-            fragmentShader={`
-              uniform vec3 uColor;
-              varying vec2 vUv;
-              void main() {
-                vec2 c = vUv - 0.5;
-                float r = length(c) * 2.0;
-                float glow = exp(-r * r * 3.5) * 0.30;
-                glow += exp(-r * 5.0) * 0.10;
-                vec3 col = mix(vec3(1.0, 0.99, 0.96), uColor, r * 0.7);
-                gl_FragColor = vec4(col * glow, glow);
-              }
-            `}
-          />
-        </mesh>
-      </group>
-    </group>
-  );
-}
 
 function HabitableZone({ inner, outer, starVisR, maxSma }: {
   inner: number; outer: number; starVisR: number; maxSma: number;
@@ -2064,6 +2236,7 @@ function MoonOrbitLine({ radius, active = false }: { radius: number; active?: bo
 function LODPlanet({ planetType, temperature, seed, sunDirection, rotationSpeed,
   mass, tidalHeating, starSpectralClass, colorShift, baseScale,
   tidallyLocked, spinOrbit32, showTempMap, showMineralMap, tempDistribution, mineralAbundance,
+  axialTilt, onBiomeClick,
 }: {
   planetType: string; temperature: number; seed: number;
   sunDirection: [number, number, number]; rotationSpeed: number;
@@ -2072,6 +2245,8 @@ function LODPlanet({ planetType, temperature, seed, sunDirection, rotationSpeed,
   tidallyLocked?: boolean; spinOrbit32?: boolean;
   showTempMap?: boolean; showMineralMap?: boolean;
   tempDistribution?: any; mineralAbundance?: any;
+  axialTilt?: number;
+  onBiomeClick?: (biome: BiomeInfo, hitPoint: THREE.Vector3) => void;
 }) {
   const ref = useRef<THREE.Group>(null!);
   const [lod, setLod] = useState({ segments: 96, displacement: 0.035 });
@@ -2109,6 +2284,8 @@ function LODPlanet({ planetType, temperature, seed, sunDirection, rotationSpeed,
         showMineralMap={showMineralMap}
         tempDistribution={tempDistribution}
         mineralAbundance={mineralAbundance}
+        axialTilt={axialTilt}
+        onBiomeClick={onBiomeClick}
       />
     </group>
   );
@@ -2462,6 +2639,69 @@ function DepthBreadcrumb({ view, systemData, planets, belts, onNavigate }: {
   );
 }
 
+/* ━━ Biome Info Panel ━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+function ResourceBar({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+      <span style={{ width: 52, color: '#6a8fa8', fontSize: 10, flexShrink: 0 }}>{label}</span>
+      <div style={{ flex: 1, height: 4, background: '#0e1a2a', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ width: `${Math.round(value * 100)}%`, height: '100%', background: color, borderRadius: 2, transition: 'width 0.3s' }} />
+      </div>
+      <span style={{ width: 26, color: '#7ab', fontSize: 10, textAlign: 'right' }}>{Math.round(value * 100)}%</span>
+    </div>
+  );
+}
+
+function BiomeInfoPanel({ biome, onClose }: { biome: BiomeInfo; onClose: () => void }) {
+  return (
+    <div style={{
+      position: 'absolute', bottom: 72, right: 16, width: 274,
+      background: 'rgba(6,12,22,0.94)', border: '1px solid rgba(80,160,255,0.28)',
+      borderRadius: 8, padding: '14px 16px', color: '#cfe0f2',
+      fontFamily: '"Courier New", monospace', fontSize: 12,
+      backdropFilter: 'blur(10px)', zIndex: 60,
+      boxShadow: '0 4px 28px rgba(0,0,0,0.7)',
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 22, lineHeight: 1 }}>{biome.icon}</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#90c8ff', letterSpacing: '0.02em' }}>{biome.name}</div>
+            <div style={{ fontSize: 10, color: '#5a7a96', marginTop: 1 }}>{biome.climate} · {biome.geology}</div>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          style={{ background: 'none', border: 'none', color: '#446', cursor: 'pointer', fontSize: 18, padding: '0 2px', lineHeight: 1 }}
+        >×</button>
+      </div>
+      {/* Description */}
+      <div style={{ lineHeight: 1.55, color: '#8aaabb', marginBottom: 12, fontSize: 11 }}>{biome.description}</div>
+      {/* Resources */}
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 10, color: '#4a6a7a', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Resources</div>
+        <ResourceBar label="Water"    value={biome.resources.water}    color="#3399cc" />
+        <ResourceBar label="Minerals" value={biome.resources.minerals} color="#cc7733" />
+        <ResourceBar label="Energy"   value={biome.resources.energy}   color="#cccc33" />
+        <ResourceBar label="Organics" value={biome.resources.organics} color="#44aa55" />
+      </div>
+      {/* Habitability */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 10, color: '#4a6a7a', textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>Habitability</span>
+        <div style={{ flex: 1, height: 6, background: '#0e1a2a', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{
+            width: `${biome.habitability * 10}%`, height: '100%', borderRadius: 3, transition: 'width 0.3s',
+            background: `hsl(${biome.habitability * 12}, 68%, 48%)`,
+          }} />
+        </div>
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#90c8ff', flexShrink: 0 }}>{biome.habitability}/10</span>
+      </div>
+    </div>
+  );
+}
+
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    MAIN COMPONENT
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
@@ -2494,6 +2734,9 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
   const [customModelName, setCustomModelName] = useState<string>('Custom');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colonyIdCounter = useRef(0);
+  /* ── Biome selection ── */
+  const [selectedBiome, setSelectedBiome] = useState<BiomeInfo | null>(null);
+
   /* ── Ship state ── */
   const [shipsMap, setShipsMap] = useState<Record<string, Ship[]>>({});
   const [shipMode, setShipMode] = useState(false);
@@ -2735,7 +2978,7 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
           in_habitable_zone: (p.sub_type_flags || []).includes('habitable_zone'),
           texture_resolution: 512,
         });
-        if (!dead) { setTexturesV2(result); setTexStatus('done'); setUsePBR(true); }
+        if (!dead) { setTexturesV2(result); setTexStatus('done'); }
       } catch { if (!dead) setTexStatus('failed'); }
     })();
 
@@ -2754,11 +2997,13 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
   const handleDrillPlanet = useCallback((idx: number) => {
     setView({ depth: 'planet', planetIdx: idx });
     setScienceOpen(false);
+    setSelectedBiome(null);
   }, []);
 
   const handleDrillMoon = useCallback((moonIdx: number) => {
     setView(prev => ({ depth: 'moon', planetIdx: prev.planetIdx, moonIdx }));
     setScienceOpen(false);
+    setSelectedBiome(null);
   }, []);
 
   const handleDrillBelt = useCallback((beltIdx: number) => {
@@ -3166,7 +3411,7 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                 {/* ═══ PLANET DEPTH — planet at center, moons orbit ═══ */}
                 <group visible={view.depth === 'planet'}>
                   {/* Lighting: star-colored key + hemisphere fill */}
-                  <directionalLight position={[10, 3, 5]} intensity={1.4} color={starColor} />
+                  <directionalLight position={[-1, 0.5, 0.5]} intensity={1.4} color={starColor} />
                   <hemisphereLight args={[starColor, '#020408', 0.02]} />
                   {/* Planetshine — colored reflected light from parent onto moons */}
                   {curPlanet && (() => {
@@ -3181,7 +3426,7 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                       : 0.04}>
                     {showPBR ? (
                       <PlanetSurfaceV2 textures={texturesV2!}
-                        sunDirection={[1, 0.3, 0.5]}
+                        sunDirection={[-1, 0.5, 0.5]}
                         starTeff={systemData?.star?.teff ?? 5778}
                         starLuminosity={systemData?.star?.luminosity ?? 1}
                         radius={1} resolution={32} />
@@ -3190,7 +3435,7 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                         planetType={globeType}
                         temperature={globeTemp}
                         seed={globeSeed}
-                        sunDirection={[1, 0.3, 0.5]}
+                        sunDirection={[-1, 0.5, 0.5]}
                         rotationSpeed={0}
                         mass={curPlanet?.mass_earth}
                         tidalHeating={0}
@@ -3201,10 +3446,12 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                         showMineralMap={showPlanetMineralMap}
                         tempDistribution={curPlanet?.temp_distribution}
                         mineralAbundance={curPlanet?.mineral_abundance}
+                        axialTilt={curPlanet?.axial_tilt ?? 0}
                         baseScale={(() => {
                           const re = curPlanet?.radius_earth || 1;
                           return 0.7 + Math.min(Math.log2(1 + re) * 0.25, 0.5);
                         })()}
+                        onBiomeClick={(biome) => setSelectedBiome(biome)}
                       />
                     )}
 
@@ -3397,9 +3644,17 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                       </>
                     )}
 
-                    <directionalLight position={[10, 3, 5]} intensity={1.5} color={starColor} />
+                    <directionalLight position={[-1, 0.5, 0.5]} intensity={1.5} color={starColor} />
                     <hemisphereLight args={[starColor, '#020408', 0.02]} />
-                    <DistantStar color={starColor} direction={[1, 0.3, 0.5]} luminosity={systemData?.star?.luminosity ?? 1} />
+                    {/* Star billboard — matches orrery OrreryStar, depth-tested so planet occludes it */}
+                    <group position={[-36.7, 18.4, 18.4]}>
+                      <OrreryStar
+                        color={starColor}
+                        size={starVisRadius(systemData?.star?.luminosity ?? 1) * 2.8}
+                        teff={systemData?.star?.teff}
+                        occludable
+                      />
+                    </group>
                   </>)}
                 </group>
 
@@ -3425,12 +3680,13 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                           planetType={globeType}
                           temperature={globeTemp}
                           seed={globeSeed}
-                          sunDirection={[1, 0.3, 0.5]}
+                          sunDirection={[-1, 0.5, 0.5]}
                           rotationSpeed={0}
                           colorShift={moonColorShift(curMoon, view.moonIdx ?? 0)}
                           mass={curMoon?.mass_earth}
                           tidalHeating={curMoon?.tidal_heating}
-                          starSpectralClass={starSpec} />
+                          starSpectralClass={starSpec}
+                          onBiomeClick={(biome) => setSelectedBiome(biome)} />
                       )}
 
                       {/* Colony buildings on moon surface (inside scale group → radius=1) */}
@@ -3472,10 +3728,10 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
 
                     <group position={[4, 2.5, -8]} scale={[2.8, 2.8, 2.8]}>
                       <ProceduralPlanet
-                        planetType={curPlanet?.planet_type || 'rocky'}
+                        planetType={resolveVenusType(curPlanet) || 'rocky'}
                         temperature={curPlanet?.temp_calculated_k ?? 288}
                         seed={hashStr(curPlanet?.planet_name || `parent-${view.planetIdx}`)}
-                        sunDirection={[1, 0.3, 0.5]}
+                        sunDirection={[-1, 0.5, 0.5]}
                         rotationSpeed={0.01}
                         mass={curPlanet?.mass_earth}
                         starSpectralClass={starSpec}
@@ -3507,9 +3763,15 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                       </>
                     )}
 
-                    <directionalLight position={[10, 3, 5]} intensity={1.3} color={starColor} />
+                    <directionalLight position={[-1, 0.5, 0.5]} intensity={1.3} color={starColor} />
                     <hemisphereLight args={[starColor, '#020408', 0.02]} />
-                    <DistantStar color={starColor} direction={[1, 0.3, 0.5]} luminosity={systemData?.star?.luminosity ?? 1} />
+                    <group position={[-36.7, 18.4, 18.4]}>
+                      <OrreryStar
+                        color={starColor}
+                        size={starVisRadius(systemData?.star?.luminosity ?? 1) * 2.8}
+                        teff={systemData?.star?.teff}
+                      />
+                    </group>
                   </>)}
                 </group>
 
@@ -3557,7 +3819,7 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
                         </Billboard>
                       </group>
 
-                      <directionalLight position={[5, 3, 8]} intensity={1.5} color={starColor} />
+                      <directionalLight position={[-1, 0.5, 0.5]} intensity={1.5} color={starColor} />
                       <hemisphereLight args={[starColor, '#020408', 0.03]} />
                     </>);
                   })()}
@@ -4085,6 +4347,11 @@ export function SystemFocusView({ systemId, gpu, onBack }: Props) {
         {/* Loading state */}
         {!systemData && (
           <div className="sf-empty-overlay">Loading system…</div>
+        )}
+
+        {/* Biome info panel — shown when a biome region is selected */}
+        {selectedBiome && view.depth === 'planet' && (
+          <BiomeInfoPanel biome={selectedBiome} onClose={() => setSelectedBiome(null)} />
         )}
 
       </div>

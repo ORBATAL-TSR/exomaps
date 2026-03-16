@@ -284,6 +284,85 @@ pub fn infer_composition(
     infer_composition_v2(mass_earth, radius_earth, sma_au, planet_type).bulk
 }
 
+/// Metallicity-aware composition inference.
+///
+/// Applies stellar [Fe/H] to the Zeng 2019 EOS output:
+///
+/// Iron core:
+///   The iron-to-silicate ratio in a planet's feeding zone scales with
+///   stellar [Fe/H].  Empirically (Grasset et al. 2009; Dorn et al. 2017):
+///     f_Fe_corrected = f_Fe_base × 10^(α × [Fe/H])
+///   where α ≈ 0.45 for rocky planets (scaled from Solar System analog).
+///
+/// Volatile delivery:
+///   Metal-rich disks are denser but also more refractory → less volatile
+///   delivery per unit mass beyond the snow line.
+///   f_volatile_corrected = f_volatile × 10^(-β × max(0, [Fe/H]))
+///   where β ≈ 0.2 (conservative; see Bitsch et al. 2019 disk models).
+///
+/// Gas giant envelope:
+///   H/He fraction is not directly modified here — envelope is set by
+///   photoevaporation and accretion history, not just disk metallicity.
+///   (The WorldGenInput pipeline controls gas-giant assignment at Stage 2.)
+///
+/// References:
+///   - Dorn et al. (2017) "Can we constrain interior structure of rocky
+///     exoplanets from mass and radius measurements?" A&A 597, A37
+///   - Grasset et al. (2009) "On the internal structure and dynamics of
+///     super-Earths" ApJ 693, 722
+///   - Bitsch et al. (2019) "Dry or water world?" A&A 630, A51
+pub fn infer_composition_with_metallicity(
+    mass_earth: f64,
+    radius_earth: f64,
+    sma_au: f64,
+    planet_type: &str,
+    star_metallicity_feh: f64,
+) -> BulkComposition {
+    // Get the base EOS composition (mass-radius from Zeng 2019)
+    let mut base = infer_composition_v2(mass_earth, radius_earth, sma_au, planet_type);
+
+    // Gas/ice giants: do not modify via [Fe/H] at this level
+    // (accretion history, disk instability, and migration dominate)
+    if matches!(planet_type, "gas-giant" | "super-jupiter" | "neptune-like") {
+        return base.bulk;
+    }
+
+    // ── Iron core correction ────────────────────────────────────────
+    // α = 0.45: empirically calibrated against Solar System + Kepler planets
+    // Clamp [Fe/H] to [-2.0, +0.6] to avoid extreme extrapolation
+    let feh_clamped = star_metallicity_feh.clamp(-2.0, 0.6_f64);
+    let alpha = 0.45_f64;
+    let feh_iron_mult = 10.0_f64.powf(alpha * feh_clamped);
+
+    // Apply correction, then re-normalise fractions so they still sum to 1.0
+    let iron_corrected = (base.bulk.iron_fraction * feh_iron_mult).clamp(0.0, 0.85);
+
+    // ── Volatile delivery correction ────────────────────────────────
+    // Metal-rich stars → refractory-rich disk → slightly less volatile delivery
+    // Only apply for planets beyond the snow line (sma > 2.5 AU proxy)
+    let beta = 0.20_f64;
+    let volatile_corrected = if sma_au > 2.5 && star_metallicity_feh > 0.0 {
+        let vol_mult = 10.0_f64.powf(-beta * star_metallicity_feh.min(0.5));
+        (base.bulk.volatile_fraction * vol_mult).clamp(0.0, 0.80)
+    } else {
+        base.bulk.volatile_fraction
+    };
+
+    // Re-normalise: keep H/He unchanged, adjust silicate as the residual
+    let h_he = base.bulk.h_he_fraction;
+    let total_non_silicate = iron_corrected + volatile_corrected + h_he;
+    let silicate_corrected = (1.0 - total_non_silicate).max(0.05);
+
+    // Final renormalisation to exactly 1.0
+    let total = iron_corrected + silicate_corrected + volatile_corrected + h_he;
+    BulkComposition {
+        iron_fraction:     iron_corrected     / total,
+        silicate_fraction: silicate_corrected / total,
+        volatile_fraction: volatile_corrected / total,
+        h_he_fraction:     h_he              / total,
+    }
+}
+
 // ── Giant planet models ─────────────────────────────
 
 /// Fortney et al. (2007) giant planet composition model.

@@ -340,3 +340,79 @@ export const GAS_TYPES = new Set([
   'gas-giant', 'hot-jupiter', 'warm-neptune', 'cold-neptune',
   'mini-neptune', 'super-neptune', 'ice-giant',
 ]);
+
+/**
+ * Zone texture set — 5 textures covering the geological archetype space:
+ *   z0: smooth low elevation  (mare / basin / ocean floor)
+ *   z1: rough low elevation   (volcanic / fractured / dark rough)
+ *   z2: mid elevation/rough   (plains / sedimentary / transitional)
+ *   z3: smooth high elevation (highland / craton / ancient stable)
+ *   z4: rough high elevation  (mountain belt / active young terrain)
+ *
+ * Blended in GLSL using zoneChar.x (elevation) × zoneChar.y (roughness)
+ * bilinear weights. zoneChar.z (mineral) drives warm/cool tint on the result.
+ */
+export interface ZoneTexSet {
+  z0: string; z1: string; z2: string; z3: string; z4: string;
+  scale: number;
+}
+
+const ZONE_TEX_SETS: Record<string, ZoneTexSet> = {
+  // Rocky / airless
+  'rocky':       { z0:'base_rocky_ancient',      z1:'base_rocky_volcanic',      z2:'continental_craton_terrain', z3:'ancient_shield_terrain',   z4:'eroded_highlands',          scale:3.2 },
+  'super-earth': { z0:'base_rocky_ancient',      z1:'eroded_canyon_network',    z2:'continental_craton_terrain', z3:'ancient_shield_terrain',   z4:'folded_mountain_belt',      scale:2.5 },
+  'sub-earth':   { z0:'basaltic_cratered_moon',  z1:'base_rocky_barren',        z2:'crater_ejecta_blanket',      z3:'ancient_lunar_highlands',  z4:'mercury_hollow_terrain',    scale:3.5 },
+  'iron-planet': { z0:'base_rocky_iron',         z1:'shock_fractured_rock',     z2:'glassified_impact_terrain',  z3:'base_rocky_ancient',       z4:'eroded_highlands',          scale:3.0 },
+  'chthonian':   { z0:'base_lava_cooled',        z1:'base_rocky_iron',          z2:'glassified_impact_terrain',  z3:'ancient_shield_terrain',   z4:'eroded_highlands',          scale:3.0 },
+
+  // Desert / arid
+  'desert':       { z0:'dry_lakebed_terrain',    z1:'eroded_canyon_network',    z2:'base_desert_sand',           z3:'rocky_desert_plateau',     z4:'wind_carved_yardangs',      scale:2.8 },
+  'desert-world': { z0:'evaporite_basin',        z1:'base_desert_oxide',        z2:'desert_dune_planet',         z3:'base_desert_salt',         z4:'wind_carved_yardangs',      scale:2.5 },
+  'carbon-planet':{ z0:'tar_sand_plains',        z1:'base_hydrocarbon_dark',    z2:'base_rocky_barren',          z3:'granite_plateau_surface',  z4:'eroded_highlands',          scale:3.0 },
+
+  // Lava / volcanic
+  'lava-world':   { z0:'lava_world_magma_crust', z1:'base_lava_crust',          z2:'basalt_lava_plains',         z3:'cooling_lava_crust',       z4:'ash_covered_lava_plateau',  scale:3.5 },
+  'lava-ocean':   { z0:'ropy_pahoehoe_lava',     z1:'basalt_lava_plains',       z2:'base_lava_cooled',           z3:'ash_covered_lava_plateau', z4:'andesite_volcano_field',    scale:3.0 },
+  'volcanic':     { z0:'volcanic_ash_basin',     z1:'base_rocky_volcanic',      z2:'basalt_lava_plains',         z3:'andesite_volcano_field',   z4:'subduction_arc_volcano_terrain', scale:3.0 },
+
+  // Ocean / water
+  'ocean-world':  { z0:'base_ocean_deep',        z1:'basalt_seafloor_ridge',    z2:'deep_ocean_abyssal_plain',   z3:'base_ocean_shallow',       z4:'coral_reef_shelf',          scale:2.5 },
+  'water-world':  { z0:'deep_ocean_abyssal_plain',z1:'basalt_seafloor_ridge',   z2:'ocean_world_shallow_shelf',  z3:'coral_reef_shelf',         z4:'island_arc_volcanics',      scale:2.5 },
+  'hycean':       { z0:'deep_ocean_abyssal_plain',z1:'base_ocean_deep',         z2:'base_ocean_shallow',         z3:'coral_reef_shelf',         z4:'island_arc_volcanics',      scale:2.5 },
+
+  // Ice
+  'ice-dwarf':    { z0:'base_ice_sheet',         z1:'crevasse_ice_field',       z2:'glacial_ice_sheet',          z3:'polar_ice_cap_terrain',    z4:'fractured_ice_shelf',       scale:3.0 },
+
+  // Habitable / temperate
+  'temperate':    { z0:'sedimentary_layer_terrain',z1:'eroded_canyon_network',  z2:'continental_craton_terrain', z3:'ancient_shield_terrain',   z4:'folded_mountain_belt',      scale:2.5 },
+  'earth-like':   { z0:'sedimentary_layer_terrain',z1:'eroded_canyon_network',  z2:'continental_craton_terrain', z3:'granite_plateau_surface',  z4:'folded_mountain_belt',      scale:2.5 },
+  'eyeball-world':{ z0:'base_ice_sheet',         z1:'fractured_ice_shelf',      z2:'continental_craton_terrain', z3:'ancient_shield_terrain',   z4:'glacial_ice_sheet',         scale:2.5 },
+
+  // Moons
+  'moon-rocky':   { z0:'basaltic_cratered_moon', z1:'base_rocky_barren',        z2:'crater_ejecta_blanket',      z3:'ancient_lunar_highlands',  z4:'mercury_hollow_terrain',    scale:3.5 },
+  'moon-volcanic':{ z0:'io_sulfur_volcanic_plains',z1:'sulfur_vent_fields',     z2:'volcanic_shield_plains',     z3:'andesite_volcano_field',   z4:'subduction_arc_volcano_terrain', scale:3.0 },
+  'moon-ice-shell':{ z0:'subglacial_ocean_ice_shell',z1:'europa_chaos_terrain', z2:'surface_europan',            z3:'fractured_ice_shelf',      z4:'crevasse_ice_field',        scale:3.0 },
+  'moon-ocean':   { z0:'subglacial_ocean_ice_shell',z1:'cryovolcanic_ice_moon', z2:'enceladus_tiger_stripes',    z3:'fractured_ice_shelf',      z4:'crevasse_ice_field',        scale:3.0 },
+  'moon-nitrogen-ice':{ z0:'nitrogen_ice_glacier',z1:'fractured_ice_shelf',    z2:'base_ice_nitrogen',          z3:'blue_ice_plains',          z4:'crevasse_ice_field',        scale:3.0 },
+  'moon-co2-frost':{ z0:'polar_ice_cap_terrain', z1:'crevasse_ice_field',       z2:'base_ice_sheet',             z3:'glacial_ice_sheet',        z4:'fractured_ice_shelf',       scale:3.0 },
+  'moon-ammonia-slush':{ z0:'ammonia_ice_plains',z1:'fractured_ice_shelf',      z2:'base_ice_ammonia',           z3:'base_ice_sheet',           z4:'crevasse_ice_field',        scale:3.0 },
+  'moon-carbon-soot':{ z0:'tar_sand_plains',     z1:'base_hydrocarbon_dark',    z2:'base_rocky_barren',          z3:'base_rocky_ancient',       z4:'eroded_highlands',          scale:3.2 },
+  'moon-magma-ocean':{ z0:'lava_world_magma_crust',z1:'basalt_lava_plains',     z2:'base_lava_cooled',           z3:'ash_covered_lava_plateau', z4:'cooling_lava_crust',        scale:3.0 },
+  'moon-sulfur':  { z0:'io_sulfur_volcanic_plains',z1:'sulfur_vent_fields',     z2:'base_desert_oxide',          z3:'volcanic_shield_plains',   z4:'andesite_volcano_field',    scale:3.0 },
+  'moon-silicate-frost':{ z0:'base_ice_sheet',   z1:'surface_europan',          z2:'ancient_lunar_highlands',    z3:'polar_ice_cap_terrain',    z4:'fractured_ice_shelf',       scale:3.0 },
+  'moon-thin-atm':{ z0:'base_desert_oxide',      z1:'crater_ejecta_blanket',    z2:'eroded_highlands',           z3:'ancient_lunar_highlands',  z4:'mercury_hollow_terrain',    scale:3.0 },
+  'moon-shepherd':{ z0:'base_rocky_barren',      z1:'basaltic_cratered_moon',   z2:'crater_ejecta_blanket',      z3:'ancient_lunar_highlands',  z4:'base_ice_sheet',            scale:3.5 },
+  'moon-binary':  { z0:'base_ice_nitrogen',      z1:'crevasse_ice_field',       z2:'glacial_ice_sheet',          z3:'polar_ice_cap_terrain',    z4:'fractured_ice_shelf',       scale:3.0 },
+  'moon-sulfate': { z0:'base_desert_salt',       z1:'evaporite_basin',          z2:'base_rocky_barren',          z3:'salt_flat_planet',         z4:'base_rocky_ancient',        scale:3.0 },
+  'moon-hydrocarbon':{ z0:'hydrocarbon_lake_shore',z1:'titan_hydrocarbon_dunes',z2:'methane_hydrocarbon_shores', z3:'base_hydrocarbon_dark',    z4:'tar_sand_plains',           scale:2.8 },
+};
+
+const DEFAULT_ZONE_SET: ZoneTexSet = {
+  z0: 'base_rocky_ancient', z1: 'base_rocky_volcanic', z2: 'continental_craton_terrain',
+  z3: 'ancient_shield_terrain', z4: 'eroded_highlands', scale: 3.0,
+};
+
+/** Get the 5-texture zone splat set for this planet type. */
+export function getZoneTextures(planetType: string): ZoneTexSet {
+  return ZONE_TEX_SETS[planetType] ?? DEFAULT_ZONE_SET;
+}
