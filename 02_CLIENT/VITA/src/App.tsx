@@ -72,6 +72,7 @@ export default function App() {
   const [focusedSystemMeta, setFocusedSystemMeta] = useState<{ name: string; starClass?: string } | null>(null);
   const [loadStage, setLoadStage] = useState<LoadStage>('connecting');
   const [loadSubProgress, setLoadSubProgress] = useState(0);
+  const [loadDetail, setLoadDetail] = useState<string>('');
   const [showLoader, setShowLoader] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   // Bumping this key forces a full Canvas + View remount after context restoration.
@@ -130,6 +131,7 @@ export default function App() {
     setFocusedSystemMeta(meta ?? { name: mainId });
     setLoadStage('connecting');
     setLoadSubProgress(0);
+    setLoadDetail('');
     setShowLoader(true);
     setSfvSystemId(mainId);   // always set so SFV stays mounted
     setFocusedSystem(mainId);
@@ -148,6 +150,10 @@ export default function App() {
 
   const handleSubProgress = useCallback((p: number) => {
     setLoadSubProgress(p);
+  }, []);
+
+  const handleLoadDetail = useCallback((d: string) => {
+    setLoadDetail(d);
   }, []);
 
   const handleLoaderFadeComplete = useCallback(() => {
@@ -215,6 +221,7 @@ export default function App() {
                     onBack={handleBackToMap}
                     onLoadStage={handleLoadStage}
                     onSubProgress={handleSubProgress}
+                    onLoadDetail={handleLoadDetail}
                   />
                 )}
               </Suspense>
@@ -228,6 +235,7 @@ export default function App() {
               starClass={focusedSystemMeta?.starClass}
               stage={loadStage}
               subProgress={loadSubProgress}
+              detail={loadDetail}
               visible={showLoader}
               onFadeComplete={handleLoaderFadeComplete}
             />

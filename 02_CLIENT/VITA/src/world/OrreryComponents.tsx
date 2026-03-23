@@ -38,6 +38,8 @@ export interface Props {
   onLoadStage?: (stage: 'connecting' | 'data' | 'scene' | 'ready') => void;
   /** Sub-progress within the current stage (0–1) for fine-grained bar updates */
   onSubProgress?: (p: number) => void;
+  /** One-line status string shown on the loading screen and logged to console */
+  onLoadDetail?: (detail: string) => void;
   /** When false the View stops scissor-rendering (visible=false) but keeps all
    *  Three.js objects and compiled shaders alive in the shared WebGL context.
    *  Prevents D3D11 TDR from shader recompilation on re-navigation. */

@@ -47,6 +47,8 @@ interface LoadingScreenProps {
   stage: LoadStage;
   /** 0–1 sub-progress within current stage */
   subProgress?: number;
+  /** One-line status string from SFV (data source, shader compile progress, etc.) */
+  detail?: string;
   visible: boolean;
   onFadeComplete?: () => void;
 }
@@ -180,7 +182,7 @@ function ProgressBar({ pct, stage }: { pct: number; stage: LoadStage }) {
 
 // ── Main component ──────────────────────────────────────────────────────────
 export function LoadingScreen({
-  systemName, starClass, stage, subProgress = 0, visible, onFadeComplete,
+  systemName, starClass, stage, subProgress = 0, detail, visible, onFadeComplete,
 }: LoadingScreenProps) {
   const [opacity, setOpacity] = useState(1);
   const [imgSrc] = useState(() => {
@@ -189,6 +191,18 @@ export function LoadingScreen({
   });
   const [imgLoaded, setImgLoaded] = useState(false);
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Elapsed-seconds counter — starts ticking when stage enters 'scene', resets on stage change
+  const [elapsedS, setElapsedS] = useState(0);
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  useEffect(() => {
+    setElapsedS(0);
+    clearInterval(elapsedRef.current);
+    if (stage === 'scene') {
+      elapsedRef.current = setInterval(() => setElapsedS(s => s + 1), 1000);
+    }
+    return () => clearInterval(elapsedRef.current);
+  }, [stage]);
 
   // Compute final progress % — all stages driven by real subProgress events from SFV.
   // scene stage milestones: 0=data loaded, 0.5=warmupReady, 1.0=shaderWarmed→ready
@@ -348,20 +362,40 @@ export function LoadingScreen({
             <ProgressBar pct={pct} stage={stage} />
           </div>
 
-          {/* Bottom flavour text */}
+          {/* Detail line — live status from SFV (data source, shader progress, etc.) */}
+          <div style={{
+            fontFamily: 'monospace',
+            fontSize: 10,
+            letterSpacing: '0.14em',
+            color: 'rgba(160,210,255,0.55)',
+            marginTop: 4,
+            minHeight: 16,
+            textAlign: 'center',
+          }}>
+            {detail || (
+              stage === 'connecting' ? 'HANDSHAKING WITH GATEWAY' :
+              stage === 'data'       ? 'PULLING STELLAR DATABASE' :
+              stage === 'scene'      ? 'BUILDING SCENE' :
+              stage === 'ready'      ? 'ENTERING SYSTEM' :
+              stage === 'failed'     ? 'CHECK NETWORK CONNECTION' : ''
+            )}
+          </div>
+
+          {/* Elapsed counter — visible after 3s in scene stage so user knows it's working */}
           <div style={{
             fontFamily: 'monospace',
             fontSize: 9,
-            letterSpacing: '0.12em',
-            color: 'rgba(77,159,255,0.25)',
-            marginTop: 8,
+            letterSpacing: '0.1em',
+            color: 'rgba(77,159,255,0.3)',
+            minHeight: 14,
+            textAlign: 'center',
             animation: 'ls-pulse 3s ease-in-out infinite',
           }}>
-            {stage === 'connecting' && 'HANDSHAKING WITH GATEWAY…'}
-            {stage === 'data'       && 'PULLING STELLAR DATABASE…'}
-            {stage === 'scene'      && 'COMPILING ORBITAL MECHANICS…'}
-            {stage === 'ready'      && 'ENTERING SYSTEM'}
-            {stage === 'failed'     && 'RETRY OR CHECK NETWORK CONNECTION'}
+            {stage === 'scene' && elapsedS >= 3
+              ? `${elapsedS}s`
+              : stage === 'failed'
+              ? 'RETRY OR CHECK NETWORK CONNECTION'
+              : ''}
           </div>
         </div>
       </div>

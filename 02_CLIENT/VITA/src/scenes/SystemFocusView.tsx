@@ -146,7 +146,11 @@ import {
      the program cache — subsequent ProceduralPlanet renders get a cache
      hit and compile instantly.
 */
-function ShaderWarmup({ systemId, onReady }: { systemId: string; onReady: () => void }) {
+function ShaderWarmup({ systemId, onReady, onDetail }: {
+  systemId: string;
+  onReady: () => void;
+  onDetail?: (d: string) => void;
+}) {
   const { gl } = useThree();
   // Keep the material alive so Three.js program cache retains the compiled program.
   const matRef = useRef<THREE.ShaderMaterial | null>(null);
@@ -157,47 +161,67 @@ function ShaderWarmup({ systemId, onReady }: { systemId: string; onReady: () => 
     // If we already compiled (cache hit for this or any systemId), signal immediately.
     if (compiledRef.current !== null) {
       console.log(`[Load] ${systemId} | WORLD_FRAG cache hit — instant ready`);
+      onDetail?.('SHADER CACHE HIT');
       onReady();
       return;
     }
 
-    const t0 = performance.now();
-    console.log(`[Load] ${systemId} | compileAsync WORLD_FRAG start (${
-      (gl as any).getContext?.()?.getExtension?.('WEBGL_parallel_shader_compile')
-        ? 'parallel-compile ✓' : 'sync fallback'
-    })`);
+    const ctx = gl.getContext() as WebGL2RenderingContext;
+    const gpuRenderer = ctx.getParameter(ctx.RENDERER) as string;
+    const gpuVendor   = ctx.getParameter(ctx.VENDOR)   as string;
+    const webglVer    = ctx.getParameter(ctx.VERSION)   as string;
+    const hasParallel = !!ctx.getExtension('WEBGL_parallel_shader_compile');
 
-    // Build a minimal dummy scene that matches ProceduralWorld's ShaderMaterial exactly.
-    // Three.js program cache key = vertexShader + fragmentShader + defines.
-    // ProceduralWorld uses no defines → cache hit guaranteed.
+    console.group(`[Load] ${systemId} | shader warmup`);
+    console.log(`  GPU      : ${gpuRenderer}`);
+    console.log(`  Vendor   : ${gpuVendor}`);
+    console.log(`  WebGL    : ${webglVer}`);
+    console.log(`  parallel : ${hasParallel ? 'WEBGL_parallel_shader_compile ✓' : 'NOT available — sync compile'}`);
+    console.log(`  shader   : WORLD_FRAG (${WORLD_FRAG.length.toLocaleString()} chars)`);
+    console.groupEnd();
+
+    onDetail?.(hasParallel ? 'COMPILING SHADERS  (parallel)' : 'COMPILING SHADERS  (sync)');
+
+    const t0 = performance.now();
+
+    // Periodic "still compiling" heartbeat every 5s
+    const interval = setInterval(() => {
+      const s = ((performance.now() - t0) / 1000).toFixed(0);
+      console.log(`[Load] ${systemId} | shader compiling… ${s}s elapsed`);
+      onDetail?.(`COMPILING SHADERS  ${s}s`);
+    }, 5_000);
+
     if (!matRef.current) {
       matRef.current = new THREE.ShaderMaterial({
         vertexShader: VERT,
         fragmentShader: WORLD_FRAG,
-        // uniforms intentionally empty — they don't affect compilation
       });
     }
     const dummy = new THREE.Scene();
     const mesh  = new THREE.Mesh(new THREE.SphereGeometry(0.001, 3, 2), matRef.current);
     dummy.add(mesh);
 
-    // compileAsync is async on Chrome/ANGLE via WEBGL_parallel_shader_compile.
-    // Sync fallback on other drivers — may block briefly but won't be worse
-    // than the previous always-sync warmup.
     gl.compileAsync(dummy, new THREE.PerspectiveCamera()).then(() => {
+      clearInterval(interval);
       const ms = (performance.now() - t0).toFixed(0);
       console.log(`[Load] ${systemId} | WORLD_FRAG compiled in ${ms}ms ✓`);
-      dummy.remove(mesh);          // free the geometry ref; keep matRef alive
+      onDetail?.(`SHADER COMPILED  ${ms}ms`);
+      dummy.remove(mesh);
       mesh.geometry.dispose();
       compiledRef.current = systemId;
       onReady();
     }).catch((e: unknown) => {
-      console.warn(`[Load] ${systemId} | compileAsync failed:`, e);
+      clearInterval(interval);
+      const ms = (performance.now() - t0).toFixed(0);
+      console.warn(`[Load] ${systemId} | compileAsync failed after ${ms}ms:`, e);
+      onDetail?.(`SHADER ERROR — ${ms}ms`);
       dummy.remove(mesh);
       mesh.geometry.dispose();
-      compiledRef.current = systemId; // unblock even on error
+      compiledRef.current = systemId;
       onReady();
     });
+
+    return () => clearInterval(interval);
   }, [systemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return null;
@@ -207,7 +231,7 @@ function ShaderWarmup({ systemId, onReady }: { systemId: string; onReady: () => 
    MAIN COMPONENT
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
-export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgress, active = true }: Props) {
+export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgress, onLoadDetail, active = true }: Props) {
   const [systemData, setSystemData] = useState<any>(null);
   const [view, setView] = useState<ViewState>({ depth: 'system', planetIdx: 0 });
   const [texturesV2, setTexturesV2] = useState<PlanetTexturesV2 | null>(null);
@@ -427,14 +451,14 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
 
     console.log(`[Load] ${systemId} | fetch start`);
     onLoadStage?.('connecting');
+    onLoadDetail?.('CONNECTING TO GATEWAY');
 
     (async () => {
-      // Yield to the renderer so the 'connecting' stage actually paints
-      // before we immediately advance to 'data' in the same microtask.
       await new Promise(r => setTimeout(r, 80));
       if (signal.aborted) return;
 
       onLoadStage?.('data');
+      onLoadDetail?.('FETCHING STELLAR DATA');
       console.log(`[Load] ${systemId} | stage→data (${ts()})`);
 
       // 1. Try live API
@@ -443,6 +467,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
         const apiCtrl = new AbortController();
         const apiTimeout = setTimeout(() => {
           console.warn(`[Load] ${systemId} | API timeout after 6000ms — falling back`);
+          onLoadDetail?.('API TIMEOUT — trying static data');
           apiCtrl.abort();
         }, 6000);
         signal.addEventListener('abort', () => apiCtrl.abort(), { once: true });
@@ -455,13 +480,16 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
             onSubProgress?.(0.6);
             const d = await r.json();
             if (!signal.aborted && d?.star) {
-              console.info(`[Load] ${systemId} | ✓ API — ${d.planets?.length ?? 0} planets (${ts()})`);
+              const npl = d.planets?.length ?? 0;
+              console.info(`[Load] ${systemId} | ✓ API — ${npl} planets (${ts()})`);
+              onLoadDetail?.(`API OK — ${npl} planet${npl !== 1 ? 's' : ''}`);
               onSubProgress?.(1.0);
               onLoadStage?.('scene');
               setSystemData(d);
               return;
             } else {
               console.warn(`[Load] ${systemId} | API ok but no star data in response`, d);
+              onLoadDetail?.('API: no star data — trying static');
             }
           }
         } catch (eInner: any) {
@@ -473,11 +501,13 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
           console.warn(`[Load] ${systemId} | API aborted (${ts()})`);
         } else {
           console.warn(`[Load] ${systemId} | API error (${ts()}):`, e?.message ?? e);
+          onLoadDetail?.('API error — trying static data');
         }
       }
 
       // 2. Try static detail data (public/data/systemDetails.json)
       console.log(`[Load] ${systemId} | trying /data/systemDetails.json (${ts()})`);
+      onLoadDetail?.('LOADING STATIC DATA');
       try {
         onSubProgress?.(0.2);
         const r2 = await verifiedFetch('/data/systemDetails.json', { signal });
@@ -495,6 +525,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
               ? { ...starMeta }
               : { main_id: systemId, spectral_class: 'G', teff: 5600, luminosity: lum };
             console.info(`[Load] ${systemId} | ✓ static JSON — ${planets.length} planets (${ts()})`);
+            onLoadDetail?.(`STATIC OK — ${planets.length} planet${planets.length !== 1 ? 's' : ''}`);
             onSubProgress?.(1.0);
             onLoadStage?.('scene');
             setSystemData({
@@ -517,6 +548,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
 
       // 3. Try Tauri SQLite cache
       console.log(`[Load] ${systemId} | trying Tauri cache (${ts()})`);
+      onLoadDetail?.('CHECKING LOCAL CACHE');
       try {
         if (signal.aborted) return;
         onSubProgress?.(0.3);
@@ -525,6 +557,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
         if (!signal.aborted && cached?.data_json) {
           const d = JSON.parse(cached.data_json);
           console.info(`[Load] ${systemId} | ✓ Tauri cache (${ts()})`);
+          onLoadDetail?.('CACHE HIT — building scene');
           onSubProgress?.(1.0);
           onLoadStage?.('scene');
           setSystemData(d);
@@ -538,6 +571,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
 
       if (!signal.aborted) {
         console.error(`[Load] ${systemId} | ✗ all sources failed (${ts()})`);
+        onLoadDetail?.('ALL SOURCES FAILED');
         onLoadStage?.('failed' as any);
       }
     })();
@@ -559,6 +593,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
   useEffect(() => {
     if (!active || !systemData || !shaderWarmed) return;
     console.log(`[Load] ${systemId} | stage→ready ✓`);
+    onLoadDetail?.('ENTERING SYSTEM');
     onSubProgress?.(1.0);
     onLoadStage?.('ready');
   }, [systemData, shaderWarmed, active]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1078,6 +1113,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
                   Outside Suspense it mounts immediately when the View mounts. ── */}
               <ShaderWarmup
                 systemId={systemId}
+                onDetail={onLoadDetail}
                 onReady={() => {
                   onSubProgress?.(0.5);
                   setShaderWarmed(true);
