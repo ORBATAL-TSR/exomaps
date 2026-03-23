@@ -23,7 +23,7 @@ import { useWebGLCleanup } from './app/useWebGLCleanup';
 // Lazy-loaded with retry: the orrery chunk downloads when the user first focuses a
 // system. lazyWithRetry re-attempts up to 3× on transient LAN network failures.
 const SystemFocusView = lazyWithRetry(
-  () => import('./components/SystemFocusView').then(m => ({ default: m.SystemFocusView }))
+  () => import('./scenes/SystemFocusView').then(m => ({ default: m.SystemFocusView }))
 );
 
 // Mounted inside the shared Canvas — disposes Three.js resources on canvas teardown

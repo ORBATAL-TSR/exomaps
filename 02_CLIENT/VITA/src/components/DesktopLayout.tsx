@@ -160,7 +160,7 @@ export function DesktopLayout({ gpu, onSystemFocus }: Props) {
     setHoveredSystem(sys);
     // Prefetch the orrery chunk while the user is still hovering — by click
     // time it's already cached. Dynamic import is idempotent: N calls = 1 fetch.
-    if (sys) import('./SystemFocusView');
+    if (sys) import('../scenes/SystemFocusView');
   }, []);
   const handleSystemClick = useCallback((id: string) => setSelectedSystem(id), []);
   const handleOpenSystem  = useCallback((mainId: string) => {

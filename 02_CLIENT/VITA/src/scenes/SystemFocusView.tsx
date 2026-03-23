@@ -40,25 +40,25 @@ import * as THREE from 'three';
 import type { PlanetTexturesV2 } from '../hooks/useTauriGPU';
 import { useScience } from '../hooks/useScience';
 import { useCampaign } from '../hooks/useCampaign';
-import { ErrorBoundary } from './ErrorBoundary';
-import { V as PlanetProfiles, deriveWorldVisuals, ProceduralPlanet, zoneArchetype } from './ProceduralPlanet';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+import { V as PlanetProfiles, deriveWorldVisuals, ProceduralPlanet, zoneArchetype } from '../components/ProceduralPlanet';
 // TexturedPlanet replaced by ProceduralPlanet with texture-informed coloring
 import type { TerrainParams } from '../panels/ColonyTerrain';
 // hygStarCatalog used in OrreryComponents (Starfield component)
 import { getCachedSystems } from '../hooks/useSystemsList';
 import { verifiedFetch } from '../utils/verifiedFetch';
-import { PlanetSurfaceV2 } from './PlanetSurfaceV2';
-import { PlanetEditorPanel } from './PlanetEditorPanel';
-import { CompositionPanel } from './CompositionPanel';
-import { AtmospherePanel } from './AtmospherePanel';
-import { InteriorPanel } from './InteriorPanel';
-import { ClimatePanel } from './ClimatePanel';
-import { AtmosphereV2Panel } from './AtmosphereV2Panel';
-import { ModelManifestPanel } from './ModelManifestPanel';
+import { PlanetSurfaceV2 } from '../components/PlanetSurfaceV2';
+import { PlanetEditorPanel } from '../components/PlanetEditorPanel';
+import { CompositionPanel } from '../components/CompositionPanel';
+import { AtmospherePanel } from '../components/AtmospherePanel';
+import { InteriorPanel } from '../components/InteriorPanel';
+import { ClimatePanel } from '../components/ClimatePanel';
+import { AtmosphereV2Panel } from '../components/AtmosphereV2Panel';
+import { ModelManifestPanel } from '../components/ModelManifestPanel';
 import { ColonyOverlay } from '../panels/ColonyOverlay';
 import type { ColonyBuilding, BuildingType } from '../panels/ColonyOverlay';
 import type { Ship } from '../panels/ColonyTerrain';
-import type { BiomeInfo } from './ProceduralPlanet';
+import type { BiomeInfo } from '../components/ProceduralPlanet';
 
 /** ms to wait after systemData arrives before signalling ready.
  *  Enough for orrery geometry to build + GPU to stabilise at system depth.

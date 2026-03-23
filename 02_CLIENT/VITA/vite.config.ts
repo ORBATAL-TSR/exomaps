@@ -118,7 +118,7 @@ export default defineConfig({
           'vendor-r3f':   ['@react-three/fiber', '@react-three/drei'],
           // Orrery chunk: only downloaded when user first focuses a system.
           // Stable name used by the hover-prefetch dynamic import().
-          'orrery':       ['./src/components/SystemFocusView'],
+          'orrery':       ['./src/scenes/SystemFocusView'],
         },
       },
     },
