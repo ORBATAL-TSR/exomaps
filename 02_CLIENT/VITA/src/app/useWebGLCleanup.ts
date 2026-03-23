@@ -28,6 +28,15 @@ export function useWebGLCleanup() {
 
   useEffect(() => {
     return () => {
+      // If the WebGL context was lost (e.g. D3D11 TDR), all GL objects already belong to
+      // the dead context.  Calling dispose() on them logs hundreds of
+      // "INVALID_OPERATION: delete: object does not belong to this context" errors.
+      // Skip disposal — the browser releases the GPU memory when the context is destroyed.
+      if (gl.getContext().isContextLost()) {
+        console.log('[WebGL] Canvas unmounting — context already lost, skipping disposal');
+        return;
+      }
+
       console.log('[WebGL] Canvas unmounting — disposing scene resources');
 
       let geomCount = 0;

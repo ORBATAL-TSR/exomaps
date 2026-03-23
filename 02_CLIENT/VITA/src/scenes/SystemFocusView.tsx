@@ -146,10 +146,13 @@ import {
      the program cache — subsequent ProceduralPlanet renders get a cache
      hit and compile instantly.
 */
-function ShaderWarmup({ systemId, onReady, onDetail }: {
+function ShaderWarmup({ systemId, onReady, onDetail, onCapability }: {
   systemId: string;
   onReady: () => void;
   onDetail?: (d: string) => void;
+  /** Called once with false if the GPU cannot compile WORLD_FRAG safely (no
+   *  WEBGL_parallel_shader_compile).  Caller should disable ProceduralPlanet. */
+  onCapability?: (canRender: boolean) => void;
 }) {
   const { gl } = useThree();
   // Keep the material alive so Three.js program cache retains the compiled program.
@@ -176,11 +179,30 @@ function ShaderWarmup({ systemId, onReady, onDetail }: {
     console.log(`  GPU      : ${gpuRenderer}`);
     console.log(`  Vendor   : ${gpuVendor}`);
     console.log(`  WebGL    : ${webglVer}`);
-    console.log(`  parallel : ${hasParallel ? 'WEBGL_parallel_shader_compile ✓' : 'NOT available — sync compile'}`);
+    console.log(`  parallel : ${hasParallel ? 'WEBGL_parallel_shader_compile ✓' : 'NOT available — planet surface disabled'}`);
     console.log(`  shader   : WORLD_FRAG (${WORLD_FRAG.length.toLocaleString()} chars)`);
     console.groupEnd();
 
-    onDetail?.(hasParallel ? 'COMPILING SHADERS  (parallel)' : 'COMPILING SHADERS  (sync)');
+    // ── CRITICAL: without WEBGL_parallel_shader_compile, compileAsync submits
+    // WORLD_FRAG to the D3D11 driver synchronously.  The 3305-line shader takes
+    // ~180 s to link on many GPUs, blocking the GPU thread and triggering the OS
+    // TDR watchdog (context lost).  Skip compilation entirely and disable the
+    // planet-surface renderer — the orrery system view uses simple meshStandardMaterial
+    // spheres and is unaffected. ──────────────────────────────────────────────────
+    if (!hasParallel) {
+      console.warn(
+        `[Load] ${systemId} | WEBGL_parallel_shader_compile unavailable — ` +
+        `skipping WORLD_FRAG compile to prevent GPU TDR.  Planet surface view disabled.`
+      );
+      onDetail?.('GPU: PLANET SURFACE UNAVAILABLE');
+      onCapability?.(false);
+      compiledRef.current = systemId;
+      onReady();
+      return;
+    }
+
+    onCapability?.(true);
+    onDetail?.('COMPILING SHADERS  (parallel)');
 
     const t0 = performance.now();
 
@@ -244,6 +266,9 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
   // 'ready' is NOT signalled until this fires — prevents cold TDR on first planet render.
   // ShaderWarmup (below) sets this via onReady callback when compileAsync resolves.
   const [shaderWarmed, setShaderWarmed] = useState(false);
+  // False on GPUs without WEBGL_parallel_shader_compile — planet surface view is
+  // disabled to prevent D3D11 TDR from the 180s synchronous WORLD_FRAG compile.
+  const [gpuCanRenderPlanets, setGpuCanRenderPlanets] = useState(true);
   const [orbitSpeed, setOrbitSpeed] = useState(1.0);
   const [showTemp, setShowTemp] = useState(false);
   const [showRad, setShowRad] = useState(false);
@@ -1114,6 +1139,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
               <ShaderWarmup
                 systemId={systemId}
                 onDetail={onLoadDetail}
+                onCapability={setGpuCanRenderPlanets}
                 onReady={() => {
                   onSubProgress?.(0.5);
                   setShaderWarmed(true);
@@ -1267,7 +1293,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
                         starTeff={systemData?.star?.teff ?? 5778}
                         starLuminosity={systemData?.star?.luminosity ?? 1}
                         radius={1} resolution={32} />
-                    ) : (
+                    ) : gpuCanRenderPlanets ? (
                       <LODPlanet
                         planetType={globeType}
                         temperature={globeTemp}
@@ -1291,7 +1317,20 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
                         })()}
                         onBiomeClick={view.depth === 'planet' ? (biome) => setSelectedBiome(biome) : undefined}
                       />
-                    )}
+                    ) : (() => {
+                      /* Fallback: GPU lacks WEBGL_parallel_shader_compile — no WORLD_FRAG */
+                      const re = curPlanet?.radius_earth || 1;
+                      const s  = 0.7 + Math.min(Math.log2(1 + re) * 0.25, 0.5);
+                      return (
+                        <mesh scale={[s, s, s]}>
+                          <sphereGeometry args={[1, 64, 64]} />
+                          <meshStandardMaterial
+                            color={PT_COLOR[globeType] || '#667788'}
+                            roughness={0.8} metalness={0.1}
+                          />
+                        </mesh>
+                      );
+                    })()}
 
                     {/* Colony buildings on planet surface */}
                     <ColonyOverlay
@@ -1557,7 +1596,7 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
                                  curMoon.moon_type === 'shepherd' ? '#99aabb' : '#776655'}
                           detail={4}
                         />
-                      ) : (
+                      ) : gpuCanRenderPlanets ? (
                         <ProceduralPlanet
                           planetType={globeType}
                           temperature={globeTemp}
@@ -1574,6 +1613,15 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
                           tempDistribution={curMoon?.temp_distribution}
                           mineralAbundance={curMoon?.mineral_abundance}
                           onBiomeClick={view.depth === 'moon' ? (biome) => setSelectedBiome(biome) : undefined} />
+                      ) : (
+                        /* Fallback: GPU lacks WEBGL_parallel_shader_compile */
+                        <mesh>
+                          <sphereGeometry args={[1, 48, 48]} />
+                          <meshStandardMaterial
+                            color={PT_COLOR[globeType] || '#667788'}
+                            roughness={0.8} metalness={0.1}
+                          />
+                        </mesh>
                       )}
 
                       {/* Colony buildings on moon surface (inside scale group → radius=1) */}
@@ -2586,6 +2634,20 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
         {/* Biome info panel — shown when a biome region is selected (planet or moon) */}
         {selectedBiome && (view.depth === 'planet' || view.depth === 'moon') && (
           <BiomeInfoPanel biome={selectedBiome} onClose={() => setSelectedBiome(null)} />
+        )}
+
+        {/* GPU limitation notice — shown at planet/moon depth when WORLD_FRAG can't compile */}
+        {!gpuCanRenderPlanets && (view.depth === 'planet' || view.depth === 'moon') && (
+          <div style={{
+            position: 'absolute', bottom: 56, left: '50%', transform: 'translateX(-50%)',
+            fontFamily: 'monospace', fontSize: 10, letterSpacing: '0.08em',
+            color: '#f59e0b', background: 'rgba(20,14,0,0.82)',
+            padding: '5px 12px', borderRadius: 3,
+            border: '1px solid rgba(245,158,11,0.3)',
+            pointerEvents: 'none', whiteSpace: 'nowrap',
+          }}>
+            PLANET SURFACE UNAVAILABLE — GPU driver does not support parallel shader compilation
+          </div>
         )}
 
       </div>
