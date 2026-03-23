@@ -563,16 +563,19 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
     onLoadStage?.('ready');
   }, [systemData, shaderWarmed, active]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Safety fallback: if warmup never fires (e.g. no planets / onReady never called),
-   *   unblock after 2.5s so the LoadingScreen doesn't stick forever. ── */
+  /* ── Safety fallback: only fires if compileAsync NEVER calls onReady (broken driver).
+   *   90s gives plenty of time for even slow parallel compilation.
+   *   DO NOT lower this below the expected compilation time — the 2500ms value previously
+   *   here caused a race: fallback fired before WEBGL_parallel_shader_compile finished,
+   *   allowing planet navigation while WORLD_FRAG was still compiling → TDR / browser kill. */
   useEffect(() => {
     if (!systemData) return;
     const t = setTimeout(() => {
       if (!shaderWarmed) {
-        console.warn(`[Load] ${systemId} | safety fallback — shaderWarmed forced after 2500ms (compileAsync never resolved — likely sync driver without parallel-compile extension)`);
+        console.warn(`[Load] ${systemId} | safety fallback after 90s — driver may not support WEBGL_parallel_shader_compile or compileAsync hung`);
         setShaderWarmed(true);
       }
-    }, 2500);
+    }, 90_000);
     return () => clearTimeout(t);
   }, [systemData]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1066,22 +1069,25 @@ export function SystemFocusView({ systemId, gpu, onBack, onLoadStage, onSubProgr
             <View style={{ position: 'absolute', inset: 0 }} visible={active}>
               <PerspectiveCamera makeDefault position={[0, 8, 14]} fov={45} />
               <color attach="background" args={['#020408']} />
+
+              {/* ── ShaderWarmup: MUST be OUTSIDE <Suspense>.
+                  If inside Suspense, any sibling that suspends (data fetch, useLoader)
+                  would block ShaderWarmup from mounting until Suspense resolves.
+                  That delays compileAsync — the safety fallback then fires first,
+                  giving a premature shaderWarmed=true → TDR on first planet render.
+                  Outside Suspense it mounts immediately when the View mounts. ── */}
+              <ShaderWarmup
+                systemId={systemId}
+                onReady={() => {
+                  onSubProgress?.(0.5);
+                  setShaderWarmed(true);
+                }}
+              />
+
               <Suspense fallback={null}>
                 <OrbitClock />
                 <SmoothCamera depth={view.depth} />
                 <Starfield />
-
-                {/* ── ShaderWarmup: pre-compiles WORLD_FRAG via gl.compileAsync().
-                    Fires even when View visible=false (active=false / on star map).
-                    Uses WEBGL_parallel_shader_compile on Chrome/D3D11 — non-blocking,
-                    zero TDR risk. Sets shaderWarmed when compileAsync resolves. ── */}
-                <ShaderWarmup
-                  systemId={systemId}
-                  onReady={() => {
-                    onSubProgress?.(0.5);
-                    setShaderWarmed(true);
-                  }}
-                />
 
                 {/* ═══ SYSTEM DEPTH ═══
                     Gate on systemData: prevents OrreryStar's complex shaders from
