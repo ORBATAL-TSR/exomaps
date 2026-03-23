@@ -80,6 +80,9 @@ target/
 # ── Jupyter ───────────────────────────────────────
 .ipynb_checkpoints
 
+# ── LAN server (local infra, not for repo) ────────
+06_LOCALRUN/
+
 # ── Misc ──────────────────────────────────────────
 .python-version
 celerybeat-schedule

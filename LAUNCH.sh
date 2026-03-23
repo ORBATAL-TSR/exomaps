@@ -1,164 +1,148 @@
 #!/usr/bin/env bash
-# ── LAUNCH.sh ── Prune old processes, rebuild client, start server ──
-# Usage:  bash LAUNCH.sh [--skip-build]
+# ── LAUNCH.sh ── Start ExoMaps (Flask API + VITA client) ──────────────────
 #
-# This script:
-#   1. Kills any existing Flask / React dev processes
-#   2. Loads environment from .env (never hardcoded)
-#   3. Rebuilds the React client (unless --skip-build)
-#   4. Starts Flask on port 5000 (serves API + SPA)
-#   5. Verifies health
+# Usage:
+#   bash LAUNCH.sh                  # build VITA + start Flask
+#   bash LAUNCH.sh --skip-build     # skip npm build, use existing dist/
+#   bash LAUNCH.sh --lan            # also start Caddy/Gunicorn LAN server
 #
-# Credentials are loaded ONLY from .env — see .env.example for template.
+# For LAN clients: use --lan (requires 07_LOCALRUN/setup.sh run once first)
+# For local dev:   omit --lan (uses vite preview on :1420)
+# ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKIP_BUILD=false
-[[ "${1:-}" == "--skip-build" ]] && SKIP_BUILD=true
+CLIENT_DIR="$ROOT_DIR/02_CLIENT/VITA"
+GATEWAY="$ROOT_DIR/01_SERVICES/01_GATEWAY/app.py"
+LOCALRUN_DIR="$ROOT_DIR/07_LOCALRUN"
+LOG_FLASK="/tmp/exomaps_flask.log"
+LOG_PREVIEW="/tmp/exomaps_preview.log"
 
-# ── Colors ────────────────────────────────────────────────
+SKIP_BUILD=false
+LAN_MODE=false
+for arg in "$@"; do
+  [[ "$arg" == "--skip-build" ]] && SKIP_BUILD=true
+  [[ "$arg" == "--lan" ]]        && LAN_MODE=true
+done
+
+# ── Colors ────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[1;33m'
 RED='\033[0;31m'; NC='\033[0m'
-
 header() { echo -e "\n${BLUE}━━━ $1 ━━━${NC}"; }
 ok()     { echo -e "  ${GREEN}✓${NC} $1"; }
 warn()   { echo -e "  ${YELLOW}⚠${NC} $1"; }
 fail()   { echo -e "  ${RED}✗${NC} $1"; }
 
-# ── 1. Prune ──────────────────────────────────────────────
+# ── 1. Prune old processes ────────────────────────────────────────────────
 header "1/5  Pruning old processes"
 
-# Kill Flask
-if pgrep -f "python3.*app\.py" > /dev/null 2>&1; then
-    pkill -f "python3.*app\.py" 2>/dev/null || true
-    sleep 1
-    ok "Killed old Flask process(es)"
-else
-    ok "No Flask processes running"
-fi
+pkill -f "python3.*app\.py"     2>/dev/null && ok "Killed old Flask" || ok "No Flask running"
+pkill -f "vite preview"         2>/dev/null && ok "Killed old vite preview" || true
+pkill -f "caddy run"            2>/dev/null && ok "Killed old Caddy" || true
+pkill -f "gunicorn.*app:app"    2>/dev/null && ok "Killed old Gunicorn" || true
 
-# Kill React dev server if running
-if pgrep -f "react-scripts start" > /dev/null 2>&1; then
-    pkill -f "react-scripts start" 2>/dev/null || true
-    sleep 1
-    ok "Killed old React dev server"
-else
-    ok "No React dev server running"
-fi
+sleep 0.5
 
-# Verify ports are free
 if ss -ltnp 2>/dev/null | grep -q ':5000 '; then
-    fail "Port 5000 still in use — kill the process manually"
-    ss -ltnp | grep ':5000 '
-    exit 1
+  fail "Port 5000 still in use — kill the process manually"
+  exit 1
 fi
-ok "Port 5000 is free"
+ok "Port 5000 free"
 
-# ── 2. Environment ───────────────────────────────────────
+# ── 2. Environment ────────────────────────────────────────────────────────
 header "2/5  Loading environment"
 
-ENV_FILE=""
 for candidate in "$ROOT_DIR/.env" "$ROOT_DIR/04_INFRA/.env"; do
-    if [ -f "$candidate" ]; then
-        ENV_FILE="$candidate"
-        break
-    fi
+  if [[ -f "$candidate" ]]; then
+    set -a; source "$candidate"; set +a
+    ok "Loaded $candidate"; break
+  fi
 done
 
-if [ -n "$ENV_FILE" ]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
-    ok "Loaded from $ENV_FILE"
+# ── 3. Build VITA client ──────────────────────────────────────────────────
+header "3/5  VITA client"
+
+DIST_DIR="$CLIENT_DIR/dist"
+
+if [[ "$SKIP_BUILD" == true ]]; then
+  if [[ -d "$DIST_DIR" ]]; then
+    ok "Skipping build (--skip-build), using existing dist/"
+  else
+    fail "No dist/ found and --skip-build set. Run without --skip-build first."
+    exit 1
+  fi
 else
-    warn "No .env file found — using current environment"
-    warn "Copy .env.example → .env and fill in passwords"
+  cd "$CLIENT_DIR"
+  if [[ ! -d "node_modules" ]]; then
+    echo "  Installing npm deps..."
+    npm install --silent 2>&1 | tail -3
+    ok "npm install done"
+  fi
+  echo "  Building production bundle..."
+  npm run build 2>&1 | tail -5
+  ok "VITA build complete → $DIST_DIR"
+  cd "$ROOT_DIR"
 fi
 
-# ── 3. Build React client ────────────────────────────────
-header "3/5  React client"
+# ── 4. Start Flask ────────────────────────────────────────────────────────
+header "4/5  Starting Flask"
 
-CLIENT_DIR="$ROOT_DIR/02_CLIENTS/01_WEB"
-BUILD_DIR="$CLIENT_DIR/build"
-
-if [ "$SKIP_BUILD" = true ]; then
-    if [ -d "$BUILD_DIR" ]; then
-        ok "Skipping build (--skip-build), existing build found"
-    else
-        fail "No build/ directory and --skip-build specified. Run without --skip-build."
-        exit 1
-    fi
-else
-    cd "$CLIENT_DIR"
-
-    if [ ! -d "node_modules" ]; then
-        echo "  Installing npm dependencies..."
-        npm install --legacy-peer-deps --silent 2>&1 | tail -3
-        ok "npm install complete"
-    fi
-
-    echo "  Building production bundle..."
-    npm run build --silent 2>&1 | tail -5
-    ok "React build complete → $BUILD_DIR"
-    cd "$ROOT_DIR"
-fi
-
-# ── 4. Start Flask ───────────────────────────────────────
-header "4/5  Starting Flask server"
-
-GATEWAY="$ROOT_DIR/01_SERVICES/01_GATEWAY/app.py"
-LOG_FILE="/tmp/exomaps_flask.log"
-
-cd "$ROOT_DIR"
-nohup python3 -u "$GATEWAY" > "$LOG_FILE" 2>&1 &
+nohup python3 -u "$GATEWAY" > "$LOG_FLASK" 2>&1 &
 FLASK_PID=$!
 echo "$FLASK_PID" > /tmp/exomaps_flask.pid
+ok "Flask started (PID $FLASK_PID, log: $LOG_FLASK)"
 
-ok "Flask started (PID $FLASK_PID, log: $LOG_FILE)"
+# ── 5. Start client server ────────────────────────────────────────────────
+header "5/5  Starting client server"
 
-# ── 5. Health check ──────────────────────────────────────
-header "5/5  Verifying health"
+if [[ "$LAN_MODE" == true ]]; then
+  if [[ ! -f "$LOCALRUN_DIR/certs/exomaps.crt" ]]; then
+    fail "No TLS cert — run 07_LOCALRUN/setup.sh first"
+    exit 1
+  fi
+  "$LOCALRUN_DIR/run.sh" &
+  ok "LAN server started (Caddy + Gunicorn) — see 07_LOCALRUN/run.sh output"
+else
+  # Must cd into CLIENT_DIR — vite preview resolves outDir relative to cwd
+  nohup bash -c "cd '$CLIENT_DIR' && ./node_modules/.bin/vite preview --host --port 1420" \
+    > "$LOG_PREVIEW" 2>&1 &
+  PREVIEW_PID=$!
+  ok "vite preview started (PID $PREVIEW_PID, log: $LOG_PREVIEW)"
+fi
 
-echo "  Waiting for server..."
+# ── Health check ──────────────────────────────────────────────────────────
+echo "  Waiting for Flask..."
 for i in $(seq 1 15); do
-    if curl -sf http://localhost:5000/api/health > /dev/null 2>&1; then
-        break
-    fi
-    sleep 1
+  curl -sf http://localhost:5000/api/health > /dev/null 2>&1 && break
+  sleep 1
 done
 
-# Test endpoints
 PASS=0; TOTAL=0
-
 check() {
-    local label="$1" url="$2"
-    TOTAL=$((TOTAL + 1))
-    HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
-    if [ "$HTTP_CODE" = "200" ]; then
-        ok "$label → 200"
-        PASS=$((PASS + 1))
-    else
-        fail "$label → $HTTP_CODE"
-    fi
+  local label="$1" url="$2"; TOTAL=$((TOTAL+1))
+  HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+  [[ "$HTTP" == "200" ]] && { ok "$label → 200"; PASS=$((PASS+1)); } || fail "$label → $HTTP"
 }
 
-check "SPA root"          "http://localhost:5000/"
-check "Client route"      "http://localhost:5000/starmap"
-check "API health"        "http://localhost:5000/api/health"
-check "Star systems"      "http://localhost:5000/api/world/systems/full"
+check "API health"    "http://localhost:5000/api/health"
+check "Star systems"  "http://localhost:5000/api/world/systems/full"
 
 # Summary
+LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || echo "localhost")
 echo ""
-if [ "$PASS" -eq "$TOTAL" ]; then
-    echo -e "${GREEN}═══════════════════════════════════════════${NC}"
-    echo -e "${GREEN}  ExoMaps is live — $PASS/$TOTAL checks passed${NC}"
-    echo -e "${GREEN}  http://localhost:5000/${NC}"
-    echo -e "${GREEN}═══════════════════════════════════════════${NC}"
+if [[ "$PASS" -eq "$TOTAL" ]]; then
+  echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
+  echo -e "${GREEN}  ExoMaps is live — $PASS/$TOTAL checks passed${NC}"
+  if [[ "$LAN_MODE" == true ]]; then
+    echo -e "${GREEN}  https://$LAN_IP   (LAN — Caddy/HTTP2)${NC}"
+    echo -e "${GREEN}  https://exomaps.local   (if hosts entry configured)${NC}"
+  else
+    echo -e "${GREEN}  https://$LAN_IP:1420   (vite preview — HTTPS)${NC}"
+  fi
+  echo -e "${GREEN}  API: http://localhost:5000${NC}"
+  echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
 else
-    echo -e "${RED}═══════════════════════════════════════════${NC}"
-    echo -e "${RED}  $PASS/$TOTAL checks passed — review log:${NC}"
-    echo -e "${RED}  tail -50 $LOG_FILE${NC}"
-    echo -e "${RED}═══════════════════════════════════════════${NC}"
-    exit 1
+  echo -e "${RED}  $PASS/$TOTAL checks passed — review logs:${NC}"
+  echo -e "${RED}  tail -50 $LOG_FLASK${NC}"
+  exit 1
 fi

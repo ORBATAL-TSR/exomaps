@@ -1,5 +1,6 @@
 import os
 import math
+import hmac
 import hashlib
 import secrets
 import pandas as pd
@@ -85,7 +86,26 @@ DEMO_PERSONAS = {
 
 # ── Project root & SPA build path ──
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_CLIENT_BUILD = os.path.join(_PROJECT_ROOT, '02_CLIENTS', '01_WEB', 'build')
+# Primary: VITA Vite build (02_CLIENT/VITA/dist)
+_CLIENT_BUILD = os.path.join(_PROJECT_ROOT, '02_CLIENT', 'VITA', 'dist')
+# Legacy fallback: old CRA build (02_CLIENTS/01_WEB/build)
+_CLIENT_BUILD_LEGACY = os.path.join(_PROJECT_ROOT, '02_CLIENTS', '01_WEB', 'build')
+if not os.path.isdir(_CLIENT_BUILD) and os.path.isdir(_CLIENT_BUILD_LEGACY):
+    _CLIENT_BUILD = _CLIENT_BUILD_LEGACY
+    logger.warning('VITA dist not found — falling back to legacy CRA build')
+
+# File extensions that are definitely assets (not SPA routes).
+# A request for a missing asset returns 404; a missing SPA route returns index.html.
+_ASSET_EXTENSIONS = {
+    '.js', '.mjs', '.cjs',          # scripts
+    '.css',                          # styles
+    '.map',                          # source maps
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.ico',  # images
+    '.woff', '.woff2', '.ttf', '.otf', '.eot',  # fonts
+    '.mp3', '.mp4', '.webm', '.ogg',             # media
+    '.pdf', '.zip',                              # downloads
+    '.glb', '.gltf', '.hdr', '.ktx2',           # 3D / textures
+}
 
 app = Flask(
     __name__,
@@ -101,9 +121,26 @@ params = {
 
 app.config.update(params)
 
-# CORS — allow React dev server (port 3000) in development
+# ── Response signing ─────────────────────────────────────────────────────────
+# Signs all JSON API responses with HMAC-SHA256 so the client can detect
+# tampering in transit. Set EXOMAPS_API_SECRET in the environment (same value
+# as VITE_API_SECRET in the client .env). If unset, signing is skipped.
+_API_SECRET: bytes | None = (os.environ.get('EXOMAPS_API_SECRET') or '').encode() or None
+
+@app.after_request
+def sign_response(response):
+    if _API_SECRET and response.content_type.startswith('application/json'):
+        body = response.get_data()
+        sig = hmac.new(_API_SECRET, body, hashlib.sha256).hexdigest()
+        response.headers['X-Content-Signature'] = f'sha256={sig}'
+    return response
+
+# CORS — allow React dev/preview server in development
 if CORS is not None:
-    CORS(app, supports_credentials=True, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
+    CORS(app, supports_credentials=True, origins=[
+        'http://localhost:3000', 'http://127.0.0.1:3000',
+        'https://localhost:1420', 'https://exomaps.local',
+    ])
 
 if SocketIO is not None:
     socket_ = SocketIO(app, async_mode='threading')
@@ -1178,15 +1215,12 @@ def _refine_planet_type(base_type, mass_e, sma_au, temp_k, hz_in, hz_out,
     type when physical conditions warrant it.  exotic_weight multiplies
     the probability of exotic outcomes (from world-rules).
     """
-    # Tidally locked eyeball worlds: M-dwarf HZ planets
-    if (base_type in ('rocky', 'super-earth', 'earth-like')
-            and spectral_class == 'M' and hz_in <= sma_au <= hz_out):
-        if rng.random() < 0.55 * exotic_weight:
-            return 'eyeball-world'
-
-    # Lava worlds: very hot, close-in
-    if temp_k > 1500 and base_type in ('rocky', 'super-earth', 'sub-earth'):
-        if rng.random() < 0.7 * exotic_weight:
+    # Lava worlds: hot close-in rocky — threshold 1200K (not 1500K; real lava worlds
+    # like 55 Cnc e have equilibrium temps ~2400K but magma oceans start ~1200K).
+    # Probability tapers down from 0.70 at 1200K to 0.90 at 2000K.
+    if temp_k > 1200 and base_type in ('rocky', 'super-earth', 'sub-earth'):
+        lava_prob = min(0.90, 0.50 + (temp_k - 1200) / 4000) * exotic_weight
+        if rng.random() < lava_prob:
             return 'lava-world'
 
     # Hot Jupiters: gas giants very close in AND actually irradiated
@@ -1194,6 +1228,15 @@ def _refine_planet_type(base_type, mass_e, sma_au, temp_k, hz_in, hz_out,
     # giants near faint stars are just regular gas/super-jupiters
     if base_type in ('gas-giant', 'super-jupiter') and sma_au < 0.15 and temp_k > 700:
         return 'hot-jupiter'
+
+    # Tidally locked eyeball worlds: M and K-dwarf HZ planets
+    # K-dwarfs are slower rotators → tidal locking possible in inner HZ.
+    # Probability scales with stellar type: M highest, K moderate.
+    _eyeball_prob = {'M': 0.55, 'K': 0.25}.get(spectral_class, 0.0)
+    if (base_type in ('rocky', 'super-earth', 'earth-like')
+            and _eyeball_prob > 0 and hz_in <= sma_au <= hz_out * 0.9):
+        if rng.random() < _eyeball_prob * exotic_weight:
+            return 'eyeball-world'
 
     # Ocean worlds: HZ super-earths with high volatile fraction
     if base_type in ('super-earth', 'earth-like') and hz_in * 0.8 <= sma_au <= hz_out * 1.3:
@@ -1205,18 +1248,22 @@ def _refine_planet_type(base_type, mass_e, sma_au, temp_k, hz_in, hz_out,
         if rng.random() < 0.12 * exotic_weight:
             return 'hycean'
 
-    # Desert worlds: inner HZ edge, medium mass
-    if base_type in ('rocky', 'earth-like') and sma_au < hz_in * 1.1 and sma_au > hz_in * 0.5:
-        if rng.random() < 0.15 * exotic_weight:
+    # Desert worlds: inner HZ fringe — wider range (0.35–1.2× hz_in)
+    if base_type in ('rocky', 'earth-like') and hz_in * 0.35 <= sma_au <= hz_in * 1.2:
+        if rng.random() < 0.18 * exotic_weight:
             return 'desert-world'
 
-    # Iron planets: very dense, close-in
-    if base_type in ('rocky', 'sub-earth') and sma_au < 0.3 and mass_e < 3.0:
-        if rng.random() < 0.10 * exotic_weight:
+    # Iron planets: rare, require very close orbit AND stripped mantle conditions
+    # Real rate ~0.1% of rocky exoplanets — prob 0.02, not 0.10
+    if base_type in ('rocky', 'sub-earth') and sma_au < 0.15 and mass_e < 2.5:
+        if rng.random() < 0.02 * exotic_weight:
             return 'iron-planet'
 
-    # Carbon planets: rare — carbon-rich chemical budget
-    if base_type in ('rocky', 'super-earth') and rng.random() < 0.03 * exotic_weight:
+    # Carbon planets: extremely rare — require unusual disk [C/O] > 1 ratio.
+    # Only plausible close-in (within ~1.5 AU) and at low temperature (not lava-world).
+    # Real occurrence ~0.05% → prob 0.008, not 0.03.
+    if (base_type in ('rocky', 'super-earth') and sma_au < 1.5
+            and temp_k < 1200 and rng.random() < 0.008 * exotic_weight):
         return 'carbon-planet'
 
     # Warm neptunes
@@ -1267,7 +1314,7 @@ _INF_STELLAR_PRIORS = {
     'F': {'planet_prob': 0.85, 'belt_prob': 0.90, 'avg_planets': 6.5},
     'G': {'planet_prob': 0.90, 'belt_prob': 0.95, 'avg_planets': 8.0},
     'K': {'planet_prob': 0.85, 'belt_prob': 0.90, 'avg_planets': 7.0},
-    'M': {'planet_prob': 0.80, 'belt_prob': 0.80, 'avg_planets': 5.5},
+    'M': {'planet_prob': 0.80, 'belt_prob': 0.60, 'avg_planets': 5.5},
     'L': {'planet_prob': 0.30, 'belt_prob': 0.40, 'avg_planets': 2.0},
     'T': {'planet_prob': 0.15, 'belt_prob': 0.25, 'avg_planets': 1.0},
 }
@@ -1291,12 +1338,171 @@ def _infer_planets_for_star(main_id, spectral_class, luminosity, star_mass=None)
     if rng.random() > prior['planet_prob']:
         return []
 
-    num = max(2, round(rng.gauss(prior['avg_planets'], 1.5)))
-    num = min(num, 12)
-
     lum = max(luminosity, 0.0001)
     lum_scale = math.sqrt(lum)
     hz_in, hz_out = _hz_bounds(luminosity)
+
+    # ── STIP mode (System of Tightly-packed Inner Planets, ~15% chance for F/G/K/M) ──
+    # Inspired by TRAPPIST-1, Kepler-11, HD 10180, Kepler-20.
+    # 5-8 sub-earth to super-earth planets packed within ~0.3 AU, often near-resonant.
+    stip_prob = {'F': 0.12, 'G': 0.15, 'K': 0.18, 'M': 0.22}.get(spectral_class, 0.08)
+    is_stip = rng.random() < stip_prob
+    if is_stip:
+        num_stip = rng.randint(5, 8)
+        stip_outer = min(0.35 * lum_scale, hz_in * 0.8)
+        stip_inner = 0.02 * lum_scale
+        stip_step  = (stip_outer - stip_inner) / max(num_stip - 1, 1)
+        # Nominal semi-major axes with small scatter ±8%
+        stip_smas = [
+            round(stip_inner + j * stip_step * rng.uniform(0.92, 1.08), 4)
+            for j in range(num_stip)
+        ]
+        # Nominal radius for this system (peas-in-pod: pick one value, scatter ±20%)
+        r_nominal = rng.uniform(0.7, 2.2)
+        stip_planets = []
+        for j, sma in enumerate(stip_smas):
+            r_e  = round(r_nominal * rng.uniform(0.82, 1.22), 3)
+            m_e  = round(r_e ** 3.0 * rng.uniform(0.6, 1.4), 3)  # roughly rocky M-R
+            temp_k = round(278.5 * (lum ** 0.25) / math.sqrt(max(sma, 0.01)), 1)
+            period = round(365.25 * (sma ** 1.5) / max(math.sqrt(star_mass or 1.0), 0.1), 2)
+            ptype  = _refine_planet_type(
+                'rocky', m_e, sma, temp_k, hz_in, hz_out, spectral_class, rng, exotic_weight=0.5)
+            tdef = _PLANET_TYPE_DEFS.get(ptype)
+            if tdef and ptype != 'rocky':
+                m_e = round(rng.uniform(*tdef['mass']), 3)
+                r_e = round(rng.uniform(*tdef['radius']), 3)
+            letter = chr(ord('b') + j)
+            stip_planets.append({
+                'planet_name': f"{main_id} {letter} (inferred)",
+                'planet_status': 'Inferred',
+                'mass_earth': m_e, 'mass_source': 'inferred',
+                'radius_earth': r_e,
+                'semi_major_axis_au': sma,
+                'orbital_period_days': period,
+                'eccentricity': round(rng.uniform(0, 0.06), 3),
+                'inclination_deg': round(rng.gauss(0, 2.5), 2),
+                'planet_type': ptype,
+                'temp_calculated_k': temp_k,
+                'sub_type_flags': [],
+                'resonances': [],
+                'confidence': 'inferred',
+                'moons': [],
+                'ring_system': None,
+            })
+        stip_planets.sort(key=lambda p: p['semi_major_axis_au'])
+        _detect_resonance_chains(stip_planets, rng)
+        for p in stip_planets:
+            p['ring_system'] = _generate_ring_system(p, rng)
+        return stip_planets
+
+    # ── Hot Jupiter injection ─────────────────────────────────────────────────
+    # Hot Jupiters (~0.5–4 MJ, P < 10 days) occur in ~1% of FGK stars.
+    # The standard band generator never places them — inner bands only produce
+    # rocky/sub-earth types and _refine_planet_type requires a gas-giant base.
+    # These systems are dynamically solitary: hot Jupiter migration clears the
+    # inner system, leaving only 0–1 outer companions that survived the migration.
+    # Rates from Wright et al. 2012 / Fressin et al. 2013:
+    _HJ_PROB = {'O': 0.003, 'B': 0.003, 'A': 0.005,
+                'F': 0.007, 'G': 0.012, 'K': 0.009, 'M': 0.001}
+    if not is_stip and rng.random() < _HJ_PROB.get(spectral_class, 0.005):
+        hj_sma    = round(rng.uniform(0.025, 0.085) * max(lum_scale, 0.3), 4)
+        hj_mass   = round(rng.uniform(150, 1400), 1)   # 0.5–4.4 MJ
+        hj_rad    = round(rng.uniform(10.0, 15.5), 2)  # 0.9–1.4 RJ
+        hj_temp   = round(278.5 * (lum ** 0.25) / math.sqrt(max(hj_sma, 0.01)), 1)
+        hj_period = round(365.25 * (hj_sma ** 1.5) / max(math.sqrt(star_mass or 1.0), 0.1), 2)
+        hj_ecc    = round(rng.uniform(0, 0.06), 3)     # tidally circularised
+        hj_type   = ('cloudless-hot-jupiter' if hj_temp > 2200 else
+                     'night-cloud-giant'     if rng.random() < 0.30 else
+                     'hot-jupiter')
+        hj_flags  = ['tidally_locked', 'banded_atmosphere', 'extreme_irradiation']
+        if hj_temp > 2000:
+            hj_flags.append('silicate_vapor_atmosphere')
+        elif hj_temp > 1500:
+            hj_flags.append('iron_cloud_nightside')
+        hj_dist = _compute_temp_distribution(
+            hj_temp, True, False, hj_type, hj_mass, 0.85, hj_ecc, rng)
+        hj_min  = _compute_mineral_abundance(
+            hj_type, hj_mass, hj_rad, hj_temp, hj_sma, 0.0, rng)
+        hj_planet = {
+            'planet_name':         f"{main_id} b (inferred)",
+            'planet_status':       'Inferred',
+            'mass_earth':          hj_mass,
+            'mass_source':         'inferred',
+            'radius_earth':        hj_rad,
+            'semi_major_axis_au':  hj_sma,
+            'orbital_period_days': hj_period,
+            'eccentricity':        hj_ecc,
+            'inclination_deg':     round(rng.gauss(0, 1.5), 2),
+            'temp_calculated_k':   hj_temp,
+            'temp_measured_k':     None,
+            'geometric_albedo':    None,
+            'detection_type':      None,
+            'molecules':           None,
+            'discovered':          None,
+            'planet_type':         hj_type,
+            'sub_type_flags':      hj_flags,
+            'tidally_locked':      True,
+            'spin_orbit_resonance': False,
+            'rotation_period_days': round(hj_period, 4),  # sync-locked
+            'temp_distribution':   hj_dist,
+            'mineral_abundance':   hj_min,
+            'confidence':          'inferred',
+            'moons':               [],   # tidal stripping removes most moons
+            'ring_system':         None,
+        }
+        hj_planet['ring_system'] = _generate_ring_system(hj_planet, rng)
+        hj_result = [hj_planet]
+
+        # ~55% chance of a cold outer companion that survived the inward migration
+        if rng.random() < 0.55:
+            cg_sma    = round(rng.uniform(2.5, 9.0) * lum_scale, 3)
+            cg_mass   = round(rng.uniform(60, 700), 1)
+            cg_rad    = round(rng.uniform(7.5, 13.0), 2)
+            cg_temp   = round(278.5 * (lum ** 0.25) / math.sqrt(max(cg_sma, 0.1)), 1)
+            cg_period = round(365.25 * (cg_sma ** 1.5) / max(math.sqrt(star_mass or 1.0), 0.1), 2)
+            cg_ecc    = round(rng.uniform(0.02, 0.30), 3)
+            cg_type   = _refine_planet_type(
+                'gas-giant', cg_mass, cg_sma, cg_temp, hz_in, hz_out, spectral_class, rng)
+            cg_dist   = _compute_temp_distribution(
+                cg_temp, False, False, cg_type, cg_mass, 0.85, cg_ecc, rng)
+            cg_min    = _compute_mineral_abundance(
+                cg_type, cg_mass, cg_rad, cg_temp, cg_sma, 0.0, rng)
+            cg_planet = {
+                'planet_name':         f"{main_id} c (inferred)",
+                'planet_status':       'Inferred',
+                'mass_earth':          cg_mass,
+                'mass_source':         'inferred',
+                'radius_earth':        cg_rad,
+                'semi_major_axis_au':  cg_sma,
+                'orbital_period_days': cg_period,
+                'eccentricity':        cg_ecc,
+                'inclination_deg':     round(rng.gauss(0, 4.0), 2),
+                'temp_calculated_k':   cg_temp,
+                'temp_measured_k':     None,
+                'geometric_albedo':    None,
+                'detection_type':      None,
+                'molecules':           None,
+                'discovered':          None,
+                'planet_type':         cg_type,
+                'sub_type_flags':      ['banded_atmosphere'] if rng.random() < 0.6 else [],
+                'tidally_locked':      False,
+                'spin_orbit_resonance': False,
+                'rotation_period_days': round(rng.uniform(0.33, 0.70), 4),
+                'temp_distribution':   cg_dist,
+                'mineral_abundance':   cg_min,
+                'confidence':          'inferred',
+                'moons':               [],
+                'ring_system':         None,
+            }
+            cg_planet['ring_system'] = _generate_ring_system(cg_planet, rng)
+            hj_result.append(cg_planet)
+
+        hj_result.sort(key=lambda p: p['semi_major_axis_au'] or 999)
+        _detect_resonance_chains(hj_result, rng)
+        return hj_result
+
+    num = max(2, round(rng.gauss(prior['avg_planets'], 1.5)))
+    num = min(num, 12)
 
     # Orbital bands scaled by luminosity — 10 bands
     bands = [
@@ -1479,6 +1685,28 @@ def _infer_planets_for_star(main_id, spectral_class, luminosity, star_mass=None)
 
     # Sort by SMA
     inferred.sort(key=lambda p: p['semi_major_axis_au'] or 999)
+
+    # ── Peas-in-pod size correlation (Weiss et al. 2018) ──
+    # Adjacent planets in compact inner systems tend to have similar sizes/masses.
+    # Pull consecutive small-planet pairs toward their geometric mean radius.
+    inner_planets = [p for p in inferred
+                     if (p.get('radius_earth') or 0) < 4.0
+                     and (p.get('semi_major_axis_au') or 99) < 5.0]
+    if len(inner_planets) >= 3:
+        # Correlation strength grows with multiplicity: 0.35 for 3 planets → 0.65 for 7+
+        peas_strength = min(0.65, 0.30 + (len(inner_planets) - 3) * 0.075)
+        for j in range(1, len(inner_planets)):
+            r_prev = inner_planets[j - 1].get('radius_earth') or 1.0
+            r_curr = inner_planets[j].get('radius_earth') or 1.0
+            r_geo  = math.sqrt(r_prev * r_curr)
+            inner_planets[j]['radius_earth'] = round(
+                r_curr * (1.0 - peas_strength) + r_geo * peas_strength, 3)
+            # Scale mass proportionally to preserve bulk density class
+            m_prev = inner_planets[j - 1].get('mass_earth') or 1.0
+            m_curr = inner_planets[j].get('mass_earth') or 1.0
+            m_geo  = math.sqrt(m_prev * m_curr)
+            inner_planets[j]['mass_earth'] = round(
+                m_curr * (1.0 - peas_strength) + m_geo * peas_strength, 3)
 
     # ── Resonance chain detection ──
     _detect_resonance_chains(inferred, rng)
@@ -1916,11 +2144,16 @@ def _generate_ring_system(planet_rec, rng):
     sma = planet_rec.get('semi_major_axis_au', 1.0)
     rad_e = planet_rec.get('radius_earth', 1.0)
 
-    # Determine ring probability
+    # Determine ring probability — mass-dependent for gas giants
     if ptype in ('gas-giant', 'super-jupiter'):
-        prob = 0.80 if sma > 1.0 else 0.10
+        # More massive giants capture and retain more ring material
+        mass_factor = min(1.0, mass / 300.0)  # 300 M_earth = fully saturated
+        base = 0.70 + 0.25 * mass_factor
+        prob = base if sma > 1.0 else 0.08
     elif ptype in ('neptune-like', 'warm-neptune', 'mini-neptune'):
-        prob = 0.60
+        prob = 0.55 if sma > 0.5 else 0.20
+    elif ptype == 'sub-neptune':
+        prob = 0.30                            # sub-Neptunes can have narrow rings
     elif ptype == 'super-earth' and mass > 3.0:
         prob = 0.05
     elif ptype in ('rocky', 'earth-like'):
@@ -2168,6 +2401,14 @@ def _generate_asteroids(main_id, belt_tag, inner_au, outer_au, rng, gaps=None):
         diameter_km = round(rng.uniform(50, 500) if j < 3 else rng.uniform(10, 150), 1)
         ecc = round(rng.uniform(0.01, 0.3), 3)
         inc = round(rng.gauss(0, 8.0), 2)
+        # Elongation: small rubble piles / captured fragments are often highly irregular
+        is_elongated = rng.random() < (0.38 if diameter_km < 80 else 0.10)
+        axis_ratio = round(rng.uniform(1.4, 2.8), 2) if is_elongated else 1.0
+        # Binary asteroids: ~12% for large (>150 km), ~6% for smaller
+        binary_prob = 0.13 if diameter_km > 150 else 0.06
+        binary_type = None
+        if rng.random() < binary_prob:
+            binary_type = rng.choice(['contact', 'close', 'wide'])
         asteroids.append({
             'name': f"{main_id} {belt_tag[0].upper()}{j+1:02d}",
             'semi_major_axis_au': sma,
@@ -2175,6 +2416,10 @@ def _generate_asteroids(main_id, belt_tag, inner_au, outer_au, rng, gaps=None):
             'eccentricity': ecc,
             'inclination_deg': inc,
             'spectral_class': rng.choice(classes),
+            'is_elongated': is_elongated,
+            'axis_ratio': axis_ratio,
+            'has_binary': binary_type is not None,
+            'binary_type': binary_type,
             'confidence': 'inferred',
         })
     asteroids.sort(key=lambda a: a['diameter_km'], reverse=True)
@@ -2193,6 +2438,22 @@ def _generate_ice_dwarfs(main_id, inner_au, outer_au, rng, count_range=(3, 8)):
         inc = round(abs(rng.gauss(0, 15.0)), 2)
         # Surface composition: N2 ice, methane frost, tholins
         surfaces = ['nitrogen-ice', 'methane-frost', 'tholin-dark', 'water-ice', 'co-ice']
+        diameter_km = round(radius * 12742, 0)  # 1 Re = 6371*2 km
+        # Binary KBOs: far more common than main-belt asteroids (Noll et al. 2008)
+        # ~30% of large TNOs have companions; contact binaries like Arrokoth common
+        is_large_kbo = radius > 0.07  # roughly > ~900 km diameter
+        binary_prob = 0.35 if is_large_kbo else 0.22
+        has_companion = rng.random() < binary_prob
+        binary_type = None
+        if has_companion:
+            if is_large_kbo:
+                binary_type = rng.choice(['contact', 'contact', 'wide', 'close'])
+            else:
+                binary_type = rng.choice(['wide', 'close', 'contact'])
+        has_trinary = has_companion and rng.random() < 0.08
+        # Scattered disc objects tend to be more elongated than cold classicals
+        is_elongated = rng.random() < (0.14 if ecc < 0.15 else 0.32)
+        axis_ratio = round(rng.uniform(1.3, 2.1), 2) if is_elongated else 1.0
         dwarfs.append({
             'name': f"{main_id} KBO-{i+1}",
             'planet_type': 'ice-dwarf',
@@ -2202,8 +2463,12 @@ def _generate_ice_dwarfs(main_id, inner_au, outer_au, rng, count_range=(3, 8)):
             'eccentricity': ecc,
             'inclination_deg': inc,
             'surface_type': rng.choice(surfaces),
-            'diameter_km': round(radius * 12742, 0),  # Re = 6371 km
-            'has_companion': rng.random() < 0.15,  # binary ice dwarfs like Pluto-Charon
+            'diameter_km': diameter_km,
+            'has_companion': has_companion,
+            'binary_type': binary_type,
+            'has_trinary': has_trinary,
+            'is_elongated': is_elongated,
+            'axis_ratio': axis_ratio,
             'confidence': 'inferred',
         })
     dwarfs.sort(key=lambda d: d['mass_earth'], reverse=True)
@@ -3559,9 +3824,17 @@ def _classify_system_architecture(planets, belts):
     if trojans:
         features.append(f'{trojans}_trojan_swarms')
 
+    # STIP detection: 5+ planets all within 0.4 AU
+    inner_compact = [p for p in planets if (p.get('semi_major_axis_au') or 99) < 0.4
+                     and (p.get('radius_earth') or 0) < 4.0]
+    if len(inner_compact) >= 5:
+        features.append('stip')
+
     # Classify
     if hot_jupiters and giants <= 2:
         arch_class = 'hot-jupiter-dominated'
+    elif len(inner_compact) >= 5:
+        arch_class = 'stip'
     elif len(planets) >= 5 and max(smas) < 2.0:
         arch_class = 'compact-multi'
     elif giants >= 3:
@@ -3818,26 +4091,43 @@ def _infer_protoplanetary_disc(star, planets, belts):
     return None
 
 
-# ── SPA catch-all (React client) ────────────────────────────────
+# ── SPA catch-all (React / VITA client) ──────────────────────────────────────
+#
+# Serving rules:
+#   1. Path exists on disk           → serve the file directly (JS chunks, images, etc.)
+#   2. Path has an asset extension   → 404  (never mask missing chunks with index.html)
+#   3. Everything else               → index.html  (React Router handles the route)
+#
+# Rule 2 is the critical invariant: if a browser receives index.html instead of a
+# missing JS chunk, the dynamic import silently resolves to HTML, the module
+# evaluator throws a SyntaxError, and the scene appears dead with no clear cause.
+#
+# Known SPA routes that must fall through to index.html even with no file:
+#   /  /system/:id  /campaigns  /admin  /data-qa  /simulation  (no extension)
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_spa(path):
-    """
-    Serve the React single-page application.
-    API routes and /phase01/* are handled by their own decorators first.
-    Static files (JS/CSS/images) are served directly; everything else
-    gets index.html so React Router can handle client-side routing.
-    """
-    if os.path.isdir(_CLIENT_BUILD):
-        if path and os.path.exists(os.path.join(_CLIENT_BUILD, path)):
-            return send_from_directory(_CLIENT_BUILD, path)
-        return send_from_directory(_CLIENT_BUILD, 'index.html')
-    # Fallback: if no React build exists, show a helpful message
-    return jsonify({
-        'message': 'ExoMaps API is running. Build the React client with: cd 02_CLIENTS/01_WEB && npm run build',
-        'api_health': '/api/health'
-    })
+    if not os.path.isdir(_CLIENT_BUILD):
+        return jsonify({
+            'message': 'ExoMaps API is running. Build the VITA client: cd 02_CLIENT/VITA && npm run build',
+            'api_health': '/api/health'
+        })
+
+    # 1. File exists → serve it (JS chunks, CSS, images, data files…)
+    full_path = os.path.join(_CLIENT_BUILD, path) if path else None
+    if full_path and os.path.isfile(full_path):
+        return send_from_directory(_CLIENT_BUILD, path)
+
+    # 2. Asset extension but file missing → hard 404
+    #    Prevents index.html being returned as a JS/CSS/image payload.
+    _, ext = os.path.splitext(path)
+    if ext.lower() in _ASSET_EXTENSIONS:
+        logger.warning('Asset 404: /%s', path)
+        return jsonify({'error': 'asset not found', 'path': path}), 404
+
+    # 3. Everything else is a SPA route → return index.html
+    return send_from_directory(_CLIENT_BUILD, 'index.html')
 
 
 if __name__ == "__main__":
